@@ -84,7 +84,7 @@ Persist and back up `data/arena.sqlite` together with its WAL files when applica
 
 ### Hosted deployment
 
-- Website: https://predictbot-flax.vercel.app (Vercel).
+- Website: https://forecast-arena-flax.vercel.app (Vercel).
 - Backend: https://predictbot-api.newtonesila.workers.dev (Cloudflare Workers).
 - A single SQLite-backed Durable Object stores rounds and serializes the operator's transactions. Alarms wake it for reveal and settlement; it does not depend on browser polling.
 - The local server and hosted worker use the same round engine in `shared/`. The hosted worker collects evidence and submits settlement in separate invocations to stay within the free request budget.

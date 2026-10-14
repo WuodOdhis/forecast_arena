@@ -2,7 +2,7 @@
 
 **An AI prediction time capsule on BOT Chain.**
 
-**[Open the live app](https://predictbot-flax.vercel.app)**
+**[Open the live app](https://forecast-arena-flax.vercel.app)**
 
 Forecast Arena lets two AI models predict the same future outcome, locks in their answers before the event, and compares those predictions with what actually happened. Over repeated rounds, it builds a public record of their performance.
 
