@@ -868,6 +868,51 @@ main {
 .page-footer > span:last-child {
   font-family: var(--mono);
 }
+.ecosystem-footer,
+.ecosystem-links {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.ecosystem-footer a,
+.ecosystem-links a {
+  color: var(--green);
+  font-weight: 600;
+}
+.ecosystem-footer a:focus-visible,
+.ecosystem-links a:focus-visible {
+  outline: 2px solid #278763;
+  outline-offset: 3px;
+}
+.ecosystem-footer .botchain-logo {
+  display: block;
+  width: 110px;
+  height: auto;
+  padding: 5px 7px;
+  border-radius: 4px;
+  background: #101a15;
+}
+.ecosystem-links {
+  flex-wrap: wrap;
+  margin-top: 20px;
+}
+.ecosystem-links a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+.about-section {
+  display: grid;
+  gap: 15px;
+  max-width: 840px;
+  line-height: 1.7;
+}
+.about-section p {
+  color: #58645d;
+}
 .alert {
   display: flex;
   gap: 10px;
@@ -1447,6 +1492,13 @@ select {
   }
   .page-footer {
     font-size: 8px;
+    flex-wrap: wrap;
+  }
+  .ecosystem-footer {
+    gap: 7px;
+  }
+  .ecosystem-footer .botchain-logo {
+    width: 96px;
   }
   .setting-row .badge {
     font-size: 9px;

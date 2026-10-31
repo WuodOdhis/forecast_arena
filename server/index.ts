@@ -6,7 +6,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { cancelRound, createRound, exclusive, tick } from './arena.js';
 import { phase, publicRound } from './domain.js';
-import { rpc } from './chain.js';
+import { arenaAddress, credentialsConfigured, features, profile, rpc } from './chain.js';
 import * as store from './store.js';
 import {
   PublicAccessError,
@@ -23,8 +23,8 @@ app.use('/api', (_req, res, next) => {
 });
 const configured = () => ({
   groq: Boolean(process.env.GROQ_API_KEY),
-  wallet: Boolean(process.env.DEPLOYER_PRIVATE_KEY),
-  contract: Boolean(process.env.ARENA_CONTRACT_ADDRESS),
+  wallet: credentialsConfigured.wallet,
+  contract: credentialsConfigured.contract,
 });
 function isOperator(req: express.Request) {
   const token = process.env.ADMIN_TOKEN;
@@ -35,7 +35,9 @@ function isOperator(req: express.Request) {
     b = Buffer.from(token);
   return a.length === b.length && timingSafeEqual(a, b);
 }
-const publicEnabled = () => Object.values(configured()).every(Boolean);
+const publicEnabled = () =>
+  Object.values(configured()).every(Boolean) &&
+  (profile.id !== 'mainnet' || features.mainnetOnchain);
 const samples: { block: string; timestamp: number; transactions: number }[] = [];
 let network: { connected: boolean; blockNumber?: string; timestamp?: number; checkedAt?: number } =
   { connected: false };
@@ -46,7 +48,7 @@ async function checkNetwork() {
   try {
     const [chainId, block] = await Promise.all([rpc.getChainId(), rpc.getBlock()]);
     network = {
-      connected: chainId === 968,
+      connected: chainId === profile.chainId,
       blockNumber: block.number.toString(),
       timestamp: Number(block.timestamp),
       checkedAt: Date.now(),
@@ -73,9 +75,12 @@ app.get('/api/status', (req, res) =>
     authRequired: Boolean(process.env.ADMIN_TOKEN),
     permissions: { operator: isOperator(req) },
     publicRounds: { ...publicRoundStatus(store.getPublicUsage()), enabled: publicEnabled() },
-    chainId: 968,
-    explorer: 'https://scan.bohr.life',
-    contract: process.env.ARENA_CONTRACT_ADDRESS || null,
+    chainId: profile.chainId,
+    networkName: profile.name,
+    chainProfile: profile.id,
+    explorer: profile.explorerBaseUrl,
+    features,
+    contract: arenaAddress,
     serverTime: Date.now(),
   }),
 );

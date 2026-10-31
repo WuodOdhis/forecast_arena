@@ -44,6 +44,8 @@ export function createArena(
       throw new Error('Finish or cancel the active round before opening another.');
     const address = mode === 'onchain' ? contractAddress() : zeroAddress;
     if (mode === 'onchain') {
+      if (chain.profile.id === 'mainnet' && !chain.features.mainnetOnchain)
+        throw new Error('Mainnet on-chain rounds are disabled for this environment.');
       if (!config.GROQ_API_KEY)
         throw new Error('Configure GROQ_API_KEY before opening an AI round.');
       await assertOperator(address);
@@ -95,8 +97,8 @@ export function createArena(
     const observationEnd = observationStart + duration;
     const rules = JSON.stringify({
       schema: 'forecast-arena/rules-v1',
-      chainId: 968,
-      question: 'How many BOT testnet transactions occur during the observation window?',
+      chainId: chain.profile.chainId,
+      question: `How many ${chain.profile.id === 'mainnet' ? 'BOT Chain' : 'BOT testnet'} transactions occur during the observation window?`,
       commitDeadline,
       revealDeadline,
       observationStart,
@@ -172,7 +174,12 @@ export function createArena(
     const address = round.contractAddress || zeroAddress;
     const id = onchain ? BigInt(round.chainRoundId!) : BigInt(`0x${round.id.replaceAll('-', '')}`);
     const submitter = onchain ? signer().account.address : zeroAddress;
-    round.commitmentDomain = { chainId: 968, contract: address, roundId: id.toString(), submitter };
+    round.commitmentDomain = {
+      chainId: chain.profile.chainId,
+      contract: address,
+      roundId: id.toString(),
+      submitter,
+    };
     store.save(round);
     if (onchain) {
       await assertOperator(address);
@@ -215,7 +222,15 @@ export function createArena(
       try {
         const agent = digest(f.id);
         if (!f.commitment) {
-          f.commitment = makeCommitment(968, address, id, agent, submitter, f.value, f.salt);
+          f.commitment = makeCommitment(
+            chain.profile.chainId,
+            address,
+            id,
+            agent,
+            submitter,
+            f.value,
+            f.salt,
+          );
           store.save(round);
         }
         if (onchain) {

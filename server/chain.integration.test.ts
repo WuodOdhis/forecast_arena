@@ -51,7 +51,8 @@ test(
       assert.ok(ready, 'Local Anvil did not start.');
       process.env.BOT_RPC_URL = url;
       process.env.DEPLOYER_PRIVATE_KEY = generatePrivateKey();
-      const { rpc, signer, send, abi, assertOperator } = await import('./chain.js');
+      const { createChain } = await import('../shared/chain.js');
+      const { rpc, signer, send, abi, assertOperator } = createChain(process.env);
       const account = privateKeyToAccount(process.env.DEPLOYER_PRIVATE_KEY as `0x${string}`);
       const localRequest = async (method: string, params: unknown[]) => {
         const result = (await (

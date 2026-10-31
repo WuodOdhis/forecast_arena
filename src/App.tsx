@@ -26,10 +26,17 @@ import {
 import type { publicRound } from '../server/domain';
 
 type Round = ReturnType<typeof publicRound>;
-type View = 'arena' | 'history' | 'leaderboard' | 'settings';
+type View = 'arena' | 'history' | 'leaderboard' | 'settings' | 'about';
 interface Status {
   network: { connected: boolean; blockNumber?: string; timestamp?: number };
   configured: { groq: boolean; wallet: boolean; contract: boolean };
+  features: {
+    mainnetOnchain: boolean;
+    walletAuth: boolean;
+    userCreatedRounds: boolean;
+    humanPredictions: boolean;
+    d1Persistence: boolean;
+  };
   authRequired: boolean;
   permissions?: { operator: boolean };
   publicRounds?: {
@@ -41,6 +48,10 @@ interface Status {
     retryAt: number | null;
   };
   contract: string | null;
+  chainId: number;
+  networkName: string;
+  chainProfile: 'testnet' | 'staging' | 'mainnet';
+  explorer: string;
   serverTime: number;
   samples: { block: string; timestamp: number; transactions: number }[];
 }
@@ -76,11 +87,19 @@ function countdown(seconds: number) {
     .toString()
     .padStart(2, '0')}`;
 }
-function ChainLink({ hash, address = false }: { hash: string; address?: boolean }) {
+function ChainLink({
+  hash,
+  address = false,
+  explorer = 'https://scan.bohr.life',
+}: {
+  hash: string;
+  address?: boolean;
+  explorer?: string;
+}) {
   return (
     <a
       className="chain-link"
-      href={`https://scan.bohr.life/${address ? 'address' : 'tx'}/${hash}`}
+      href={`${explorer}/${address ? 'address' : 'tx'}/${hash}`}
       target="_blank"
       rel="noreferrer"
       title={hash}
@@ -90,7 +109,13 @@ function ChainLink({ hash, address = false }: { hash: string; address?: boolean 
     </a>
   );
 }
-function LiveSignal({ samples }: { samples: Status['samples'] }) {
+function LiveSignal({
+  samples,
+  networkName,
+}: {
+  samples: Status['samples'];
+  networkName: string;
+}) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const canvas = ref.current;
@@ -148,7 +173,7 @@ function LiveSignal({ samples }: { samples: Status['samples'] }) {
       ref={ref}
       className="signal-canvas"
       role="img"
-      aria-label="Transactions per sampled BOT testnet block"
+      aria-label={`Transactions per sampled ${networkName} block`}
     />
   );
 }
@@ -265,6 +290,8 @@ export default function App() {
     rounds.find((r) => r.phase === 'SETTLED') ||
     rounds[0];
   const ready = status && Object.values(status.configured).every(Boolean);
+  const onchainEnabled =
+    !status || status.chainProfile !== 'mainnet' || status.features?.mainnetOnchain === true;
   const operator = status?.permissions?.operator ?? !status?.authRequired;
   const reviewer = Boolean(status?.publicRounds) && !operator;
   const publicAccess = status?.publicRounds;
@@ -337,6 +364,7 @@ export default function App() {
     { id: 'history', label: 'Round history', icon: History },
     { id: 'leaderboard', label: 'Leaderboard', icon: Trophy },
     { id: 'settings', label: 'Settings', icon: Settings2 },
+    { id: 'about', label: 'About the experiment', icon: CircleHelp },
   ] as const;
   const settled = rounds.filter((r) => r.phase === 'SETTLED');
   const scored = settled.filter((r) => r.mode === boardMode);
@@ -404,7 +432,8 @@ export default function App() {
         <div className="sidebar-bottom">
           <div className="network-tag">
             <span className={`status-dot ${status?.network.connected ? 'online' : ''}`} />
-            BOT TESTNET<span>968</span>
+            {status?.networkName?.toUpperCase() ?? 'BOT TESTNET'}
+            <span>{status?.chainId ?? 968}</span>
           </div>
           <a
             href="https://dev-docs.botchain.ai/docs/Developers/quick-guide/"
@@ -427,7 +456,9 @@ export default function App() {
           <div className="top-actions">
             <span className="network-status">
               <span className={`status-dot ${status?.network.connected ? 'online' : ''}`} />
-              {status?.network.connected ? 'Network connected' : 'Connecting to testnet'}
+              {status?.network.connected
+                ? `${status.networkName} connected`
+                : `Connecting to ${status?.networkName ?? 'BOT Testnet'}`}
             </span>
             <button
               className="icon-button"
@@ -467,7 +498,9 @@ export default function App() {
                     ? 'Round history'
                     : view === 'leaderboard'
                       ? 'Leaderboard'
-                      : 'Settings'}
+                      : view === 'settings'
+                        ? 'Settings'
+                        : 'About the experiment'}
               </h1>
             </div>
             <button
@@ -524,10 +557,10 @@ export default function App() {
                   </strong>
                 </div>
                 <div>
-                  <span>Latest testnet block</span>
+                  <span>Latest {status?.networkName ?? 'BOT Testnet'} block</span>
                   <strong>
                     {status?.network.blockNumber ? fmt(Number(status.network.blockNumber)) : '--'}
-                    <small>BOT / 968</small>
+                    <small>BOT / {status?.chainId ?? '--'}</small>
                   </strong>
                 </div>
                 <div>
@@ -553,8 +586,12 @@ export default function App() {
                     </span>
                   </div>
                   <div className="question-band">
-                    <div className="eyebrow">TRANSACTION COUNT / BOT TESTNET</div>
-                    <h2>How many transactions will BOT testnet process?</h2>
+                    <div className="eyebrow">
+                      TRANSACTION COUNT / {(status?.networkName ?? 'BOT Testnet').toUpperCase()}
+                    </div>
+                    <h2>
+                      How many transactions will {status?.networkName ?? 'BOT Testnet'} process?
+                    </h2>
                     <div className="question-meta">
                       <span>
                         <Clock3 size={14} />
@@ -712,9 +749,9 @@ export default function App() {
                                   {f.commitment ? short(f.commitment) : 'Awaiting commitment'}
                                 </span>
                                 {f.revealTx ? (
-                                  <ChainLink hash={f.revealTx} />
+                                  <ChainLink hash={f.revealTx} explorer={status?.explorer} />
                                 ) : f.commitTx ? (
-                                  <ChainLink hash={f.commitTx} />
+                                  <ChainLink hash={f.commitTx} explorer={status?.explorer} />
                                 ) : (
                                   <small>Local record</small>
                                 )}
@@ -777,18 +814,21 @@ export default function App() {
                       <strong>{status?.samples.at(-1)?.transactions ?? '--'}</strong>
                       <span>tx / sampled block</span>
                     </div>
-                    <LiveSignal samples={status?.samples || []} />
+                    <LiveSignal
+                      samples={status?.samples || []}
+                      networkName={status?.networkName ?? 'BOT Testnet'}
+                    />
                     <div className="chart-footer">
                       <span>Recent block samples</span>
                       <span>15s interval</span>
                     </div>
                     <a
                       className="rail-link"
-                      href="https://scan.bohr.life"
+                      href={status?.explorer ?? 'https://scan.bohr.life'}
                       target="_blank"
                       rel="noreferrer"
                     >
-                      BOT testnet explorer
+                      {status?.networkName ?? 'BOT Testnet'} explorer
                       <ExternalLink size={14} />
                     </a>
                   </section>
@@ -805,7 +845,7 @@ export default function App() {
                       </button>
                     </div>
                     {[
-                      { name: 'Testnet RPC', ready: status?.network.connected },
+                      { name: `${status?.networkName ?? 'BOT Testnet'} RPC`, ready: status?.network.connected },
                       { name: 'Groq models', ready: status?.configured.groq },
                       { name: 'Signing wallet', ready: status?.configured.wallet },
                       { name: 'Arena contract', ready: status?.configured.contract },
@@ -834,8 +874,10 @@ export default function App() {
                           : 'Local commitments in practice'}
                       </span>
                     </div>
-                    {round?.contractAddress && <ChainLink hash={round.contractAddress} address />}
-                    {round?.settleTx && <ChainLink hash={round.settleTx} />}
+                    {round?.contractAddress && (
+                      <ChainLink hash={round.contractAddress} address explorer={status?.explorer} />
+                    )}
+                    {round?.settleTx && <ChainLink hash={round.settleTx} explorer={status?.explorer} />}
                   </section>
                 </aside>
               </div>
@@ -1000,7 +1042,9 @@ export default function App() {
             <section className="settings-section">
               <div className="section-heading">
                 <h2>Environment</h2>
-                <span className="badge">BOT Testnet / 968</span>
+                <span className="badge">
+                  {status?.networkName ?? 'BOT Testnet'} / {status?.chainId ?? 968}
+                </span>
               </div>
               <div className="setting-row">
                 <div>
@@ -1024,28 +1068,42 @@ export default function App() {
               <div className="setting-row">
                 <div>
                   <h3>Signing wallet</h3>
-                  <span>Dedicated testnet operator</span>
+                  <span>
+                    {status?.chainProfile === 'mainnet'
+                      ? 'Mainnet operator (server-managed)'
+                      : 'Dedicated testnet operator'}
+                  </span>
                 </div>
                 <span className={`badge ${status?.configured.wallet ? 'green' : ''}`}>
-                  {status?.configured.wallet ? 'Configured' : 'Missing DEPLOYER_PRIVATE_KEY'}
+                  {status?.configured.wallet
+                    ? 'Configured'
+                    : `Missing ${
+                        status?.chainProfile === 'mainnet'
+                          ? 'MAINNET_DEPLOYER_PRIVATE_KEY'
+                          : status?.chainProfile === 'staging'
+                            ? 'STAGING_DEPLOYER_PRIVATE_KEY'
+                            : 'DEPLOYER_PRIVATE_KEY'
+                      }`}
                 </span>
-                <a
-                  className="icon-button"
-                  title="Open testnet faucet"
-                  aria-label="Open testnet faucet"
-                  href="https://faucet.botchain.ai/basic"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  <ExternalLink size={17} />
-                </a>
+                {status?.chainProfile !== 'mainnet' && (
+                  <a
+                    className="icon-button"
+                    title="Open testnet faucet"
+                    aria-label="Open testnet faucet"
+                    href="https://faucet.botchain.ai/basic"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    <ExternalLink size={17} />
+                  </a>
+                )}
               </div>
               <div className="setting-row">
                 <div>
                   <h3>Arena contract</h3>
                   <span>
                     {status?.contract ? (
-                      <ChainLink hash={status.contract} address />
+                      <ChainLink hash={status.contract} address explorer={status.explorer} />
                     ) : (
                       'Not deployed'
                     )}
@@ -1106,11 +1164,75 @@ export default function App() {
               </div>
             </section>
           )}
+          {view === 'about' && (
+            <section className="full-section about-section">
+              <div className="eyebrow">BOT CHAIN / FORECAST EXPERIMENT</div>
+              <h2>What this experiment measures</h2>
+              <p>
+                Forecast Arena compares two forecasts for the number of transactions in a defined
+                BOT Chain observation window. The project does not take bets, offer cash prizes, or
+                custody user funds.
+              </p>
+              <h2>What is on-chain</h2>
+              <p>
+                In on-chain AI mode, the arena contract records round rules, sealed prediction
+                commitments, reveals, cancellation, and the operator-reported settlement. The
+                commitment lets anyone check that a revealed forecast matches its earlier
+                commitment.
+              </p>
+              <h2>What is off-chain</h2>
+              <p>
+                Model execution, forecast explanations, RPC block collection, and evidence
+                assembly are performed by the project service. Local practice commitments remain
+                in local app storage and are not on-chain records.
+              </p>
+              <h2>What the blockchain does and does not prove</h2>
+              <p>
+                Public transactions prove that a particular commitment or report was submitted to
+                the selected chain. They do not prove which AI generated a forecast, that the RPC
+                returned a complete or canonical block history, or that the reported transaction
+                count is correct. The outcome remains operator-reported and should be checked
+                against the published evidence and an independent RPC.
+              </p>
+              <h2>Ecosystem</h2>
+              <p>
+                Network: {status?.networkName ?? 'BOT Testnet'} (chain {status?.chainId ?? 968}).
+                This app does not claim a mainnet deployment unless its live profile and contract
+                are configured and verified.
+              </p>
+              {status?.contract && (
+                <p>
+                  Arena contract: <ChainLink hash={status.contract} address explorer={status.explorer} />
+                </p>
+              )}
+              <div className="ecosystem-links" aria-label="BOT Chain ecosystem links">
+                <a href="https://botchain.ai" target="_blank" rel="noreferrer">
+                  BOT Chain website <ExternalLink size={14} />
+                </a>
+                <a href="https://scan.botchain.ai" target="_blank" rel="noreferrer">
+                  BOT Chain explorer <ExternalLink size={14} />
+                </a>
+              </div>
+            </section>
+          )}
           <footer className="page-footer">
             <span>
               <span className="status-dot online" />
-              BOT Testnet · No real-money stakes
+              {status?.networkName ?? 'BOT Testnet'} · No real-money stakes
             </span>
+            <div className="ecosystem-footer">
+              <a
+                href="https://botchain.ai"
+                target="_blank"
+                rel="noreferrer"
+                aria-label="BOT Chain"
+              >
+                <img className="botchain-logo" src="/botchain-logo.png" alt="BOT Chain" />
+              </a>
+              <a href="https://scan.botchain.ai" target="_blank" rel="noreferrer">
+                Explorer
+              </a>
+            </div>
             <span>{status?.contract ? short(status.contract) : 'Local workspace'}</span>
           </footer>
         </main>
@@ -1162,14 +1284,16 @@ export default function App() {
                   <span>Statistical baselines · Real chain outcome</span>
                 </button>
                 <button
-                  disabled={busy || !ready}
+                  disabled={busy || !ready || !onchainEnabled}
                   className={mode === 'onchain' ? 'active' : ''}
                   onClick={() => setMode('onchain')}
                 >
                   <ShieldCheck size={19} />
                   <b>On-chain AI</b>
                   <span>
-                    {ready
+                    {!onchainEnabled
+                      ? 'Mainnet on-chain rounds are disabled'
+                      : ready
                       ? 'Groq forecasts · BOT commitments'
                       : 'Requires model, wallet, and contract'}
                   </span>
@@ -1197,7 +1321,7 @@ export default function App() {
               <span>Commit + reveal</span>
               <b>{!reviewer && mode === 'practice' ? '40 seconds' : '3 minutes 30 seconds'}</b>
               <span>Outcome source</span>
-              <b>BOT testnet blocks</b>
+              <b>{status?.networkName ?? 'BOT Testnet'} blocks</b>
               <span>Scoring</span>
               <b>Absolute prediction error</b>
             </div>

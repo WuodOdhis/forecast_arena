@@ -33,9 +33,125 @@ npm run contracts:build
 npm run deploy:testnet
 ```
 
-Deployment signs a transaction on chain **968 only** and prints its explorer link and contract address. Set `ARENA_CONTRACT_ADDRESS` locally, then restart the backend. The wallet must match the contract's immutable operator. Deployment is not performed automatically at startup.
+The testnet command signs a transaction on chain **968 only** and prints its explorer link and contract address. Set `ARENA_CONTRACT_ADDRESS` locally, then restart the backend. The wallet must match the contract's immutable operator. Deployment is not performed automatically at startup.
+
+## Mainnet deployment preflight
+
+The current contract is an operator-controlled prototype: the operator creates
+rounds, submits commitments, reports outcomes, and can cancel rounds. It does
+not implement wallet-connected human actions, role separation, or the full
+production migration described in [PLAN.md](../PLAN.md). Do not treat deploying
+this prototype as completing the mainnet launch requirements.
+
+Build and test the reviewed contract before any deployment attempt. A dry run
+estimates deployment gas and cost from the selected RPC without signing or
+broadcasting:
+
+```powershell
+npm run contracts:build
+$env:CHAIN_PROFILE = 'mainnet'
+$env:MAINNET_DEPLOYER_PRIVATE_KEY = '<load securely in this local shell; never paste it into chat or commit it>'
+npm run deploy:check
+```
+
+Only after contract review, tests, and an explicit deployment decision, the
+separate broadcast command requires an additional exact confirmation phrase:
+
+```powershell
+$env:CONFIRM_MAINNET_DEPLOYMENT = 'I understand this deploys ForecastArena on BOT Chain mainnet'
+npm run deploy:mainnet
+```
+
+The script checks that the selected RPC reports chain ID 677, validates the
+build artifact, estimates gas, verifies the configured wallet balance against
+the estimated fee, waits for the profile confirmation threshold, and verifies
+that code exists at the resulting contract address. The estimate is not a
+guaranteed maximum: gas price and execution conditions can change before
+broadcast. Use a fresh, dedicated deployment key supplied through a local
+secret manager or shell environment; never use a key disclosed in chat.
+
+The operator-controlled prototype contract was deployed on 2026-10-31:
+
+- Address: [`0xcd033df00ecf939247c9bcb3c79b7f27ed616c8a`](https://scan.botchain.ai/address/0xcd033df00ecf939247c9bcb3c79b7f27ed616c8a)
+- Deployment transaction: [`0x003f6df2c84104076d6e6c39b4ef69c7dc9b0c9a56682489a12cf89295738e82`](https://scan.botchain.ai/tx/0x003f6df2c84104076d6e6c39b4ef69c7dc9b0c9a56682489a12cf89295738e82)
+- Receipt: successful on chain 677 with the app's 12-confirmation buffer met.
+
+This is a contract deployment for validation, not a public product launch.
+Mainnet round creation remains disabled pending completion of the wallet,
+persistence, contract, and operations milestones.
+
+### Mainnet contract E2E validation
+
+On 2026-10-31, round `1` was exercised directly against the mainnet contract
+with the operator account to validate the supported contract lifecycle. The
+round was explicitly marked as a test in its hashed rules; it is not product,
+human-wallet, or ecosystem-eligibility activity. All four transactions
+confirmed successfully:
+
+| Action | Transaction |
+|---|---|
+| Create test round | [0x6a477e359add86ffa0f6b96e2da0869202dd7a0ac9b7d7e50e5f063dfe0ec001](https://scan.botchain.ai/tx/0x6a477e359add86ffa0f6b96e2da0869202dd7a0ac9b7d7e50e5f063dfe0ec001) |
+| Commit forecast | [0x157613273ef0e90d4fddc5a4517d74995944b2a7c746f6ad75e20a7b3c0a953b](https://scan.botchain.ai/tx/0x157613273ef0e90d4fddc5a4517d74995944b2a7c746f6ad75e20a7b3c0a953b) |
+| Reveal forecast | [0x74545089eebe580a0a5e35cedb29ef854dfd6b90ddc9b229c4ebff2d43d45819](https://scan.botchain.ai/tx/0x74545089eebe580a0a5e35cedb29ef854dfd6b90ddc9b229c4ebff2d43d45819) |
+| Settle test round | [0x9d057b03af726c3763fa02b428b2ba86a2693dbd979b9dd87e0a7b086a3c88fe](https://scan.botchain.ai/tx/0x9d057b03af726c3763fa02b428b2ba86a2693dbd979b9dd87e0a7b086a3c88fe) |
+
+Final on-chain reads confirmed the forecast was revealed and round `1` was
+settled with the test outcome. Total transaction fees were `0.00664676 BOT`.
+This validates only the existing operator-controlled contract calls; fresh
+wallets cannot create or commit because those methods are restricted to the
+operator. The test does not enable mainnet rounds in the application.
 
 The project's current testnet deployment is [`0xcd8da7961c607ad246dfb4a74ba2d07de38df346`](https://scan.bohr.life/address/0xcd8da7961c607ad246dfb4a74ba2d07de38df346). A different operator wallet needs its own contract deployment.
+
+## Chain profiles
+
+`CHAIN_PROFILE` selects `testnet`, `staging`, or `mainnet`; it defaults to
+`testnet`. Staging uses BOT testnet chain ID 968 but has separate
+`STAGING_DEPLOYER_PRIVATE_KEY`, `STAGING_ARENA_CONTRACT_ADDRESS`, and
+`STAGING_BOT_RPC_URL` settings. It does not fall back to the testnet signing key
+or contract address.
+
+The verified BOT mainnet profile uses chain ID 677, RPC
+[`https://rpc.botchain.ai`](https://dev-docs.botchain.ai/docs/Developers/json-rpc-endpoint/),
+explorer [`https://scan.botchain.ai`](https://scan.botchain.ai), and native token
+BOT. Its contract and signing key are separately configured through
+`MAINNET_ARENA_CONTRACT_ADDRESS` and `MAINNET_DEPLOYER_PRIVATE_KEY`; no mainnet
+contract address is configured by this repository. An RPC chain-ID mismatch
+fails closed.
+
+Outcome collection waits for 12 confirmations in each profile. This is the
+application's configurable safety buffer, not a BOT Chain finality guarantee.
+Mainnet on-chain rounds and all new wallet/persistence features are disabled by
+default. Feature flags accept only `true` or `false`; profile-specific
+`FEATURE_MAINNET_*`, `FEATURE_STAGING_*`, or `FEATURE_TESTNET_*` values override
+shared `FEATURE_*` values. Do not enable a mainnet capability until its contract,
+storage, and operational prerequisites have passed their launch gates.
+
+Cloudflare deployments have isolated `testnet` (default), `staging`, and
+`mainnet` environments. Staging and mainnet use distinct Durable Object classes
+and storage namespaces. Set credentials as environment-specific Cloudflare
+secrets; never put them in `wrangler.jsonc`:
+
+```powershell
+npx wrangler secret put DEPLOYER_PRIVATE_KEY
+npx wrangler secret put GROQ_API_KEY
+npx wrangler secret put ADMIN_TOKEN
+npx wrangler secret put STAGING_DEPLOYER_PRIVATE_KEY --env staging
+npx wrangler secret put STAGING_ARENA_CONTRACT_ADDRESS --env staging
+npx wrangler secret put MAINNET_DEPLOYER_PRIVATE_KEY --env mainnet
+npx wrangler secret put MAINNET_ARENA_CONTRACT_ADDRESS --env mainnet
+```
+
+Configure `ALLOWED_ORIGINS` and provider secrets independently for each named
+environment as required. The provided mainnet environment deliberately has no
+contract address or signing secret and sets `FEATURE_MAINNET_ONCHAIN=false`.
+Validate the bundles without deploying:
+
+```powershell
+npm run worker:check
+npm run worker:check:staging
+npm run worker:check:mainnet
+```
 
 Open an **On-chain AI** round. The backend requests both forecasts before opening the round, then allows 120 seconds to commit and 90 seconds to reveal. Observation starts after reveal closes. A single worker serializes operator transactions. Run one backend instance against the database and operator wallet.
 

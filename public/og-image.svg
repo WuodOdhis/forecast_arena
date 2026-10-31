@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title description">
+  <title id="title">Forecast Arena</title>
+  <desc id="description">An independent BOT Chain forecasting experiment</desc>
+  <rect width="1200" height="630" fill="#101a15"/>
+  <circle cx="1040" cy="114" r="180" fill="#193729"/>
+  <circle cx="1040" cy="114" r="116" fill="#207554"/>
+  <path d="M80 82h54v54H80z" rx="8" fill="#c7eed6"/>
+  <path d="M97 93h21a13 13 0 0 1 9 22 12 12 0 0 1-9 19H97zm11 10v8h8a4 4 0 0 0 0-8zm0 18v3h8a2 2 0 0 0 0-3z" fill="#153c2a"/>
+  <text x="158" y="118" fill="#f2f7f4" font-family="Arial,sans-serif" font-size="29" font-weight="700">FORECAST ARENA</text>
+  <text x="80" y="288" fill="#d5f1de" font-family="Arial,sans-serif" font-size="68" font-weight="700">A forecast, sealed</text>
+  <text x="80" y="374" fill="#d5f1de" font-family="Arial,sans-serif" font-size="68" font-weight="700">before the outcome.</text>
+  <text x="84" y="456" fill="#b3bfb7" font-family="Arial,sans-serif" font-size="29">An independent BOT Chain transaction-count experiment</text>
+  <path d="M84 512h475" stroke="#62c58e" stroke-width="4"/>
+  <text x="84" y="562" fill="#98aaa0" font-family="Arial,sans-serif" font-size="21">Sealed forecasts · Public commitments · Published block evidence</text>
+</svg>

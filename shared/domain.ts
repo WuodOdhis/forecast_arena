@@ -42,7 +42,7 @@ export interface Round {
 }
 export interface Evidence {
   schema: 'forecast-arena/outcome-v1';
-  chainId: 968;
+  chainId: number;
   observationStart: number;
   observationEnd: number;
   collectedAt: number;

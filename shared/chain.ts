@@ -8,26 +8,31 @@ import {
   type Hex,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
+import { resolveChainProfile, type ChainEnvironment } from './chains.js';
 import type { Evidence } from './domain.js';
+import { resolveFeatureFlags, type FeatureFlagEnvironment } from './features.js';
 
-export interface ChainConfig {
-  BOT_RPC_URL?: string;
-  DEPLOYER_PRIVATE_KEY?: string;
-  ARENA_CONTRACT_ADDRESS?: string;
-}
+export type ChainConfig = ChainEnvironment & FeatureFlagEnvironment;
 
 export function createChain(config: ChainConfig) {
-  const botTestnet = defineChain({
-    id: 968,
-    name: 'BOT Testnet',
-    nativeCurrency: { name: 'Test BOT', symbol: 'tBOT', decimals: 18 },
-    rpcUrls: { default: { http: [config.BOT_RPC_URL || 'https://rpc.bohr.life'] } },
-    blockExplorers: { default: { name: 'BOTScan', url: 'https://scan.bohr.life' } },
-    testnet: true,
+  const resolved = resolveChainProfile(config);
+  const { profile } = resolved;
+  const features = resolveFeatureFlags(config, profile.id);
+  const credentialsConfigured = {
+    wallet: Boolean(resolved.deployerPrivateKey),
+    contract: Boolean(resolved.arenaContractAddress),
+  };
+  const botChain = defineChain({
+    id: profile.chainId,
+    name: profile.name,
+    nativeCurrency: profile.nativeCurrency,
+    rpcUrls: { default: { http: [resolved.rpcUrl] } },
+    blockExplorers: { default: { name: 'BOTScan', url: profile.explorerBaseUrl } },
+    testnet: profile.testnet,
   });
   const rpc = createPublicClient({
-    chain: botTestnet,
-    transport: http(undefined, {
+    chain: botChain,
+    transport: http(resolved.rpcUrl, {
       timeout: 15_000,
       retryCount: 2,
       batch: { batchSize: 128, wait: 5 },
@@ -45,23 +50,32 @@ export function createChain(config: ChainConfig) {
     'function cancel(uint256)',
   ]);
   function signer() {
-    const key = config.DEPLOYER_PRIVATE_KEY;
+    const key = resolved.deployerPrivateKey;
     if (!key || !/^0x[0-9a-fA-F]{64}$/.test(key))
-      throw new Error('Configure a valid testnet DEPLOYER_PRIVATE_KEY in .env.');
+      throw new Error(`Configure a valid ${profile.id} deployer private key in the server secrets.`);
     const account = privateKeyToAccount(key as Hex);
-    return createWalletClient({ account, chain: botTestnet, transport: http() });
+    return createWalletClient({ account, chain: botChain, transport: http(resolved.rpcUrl) });
   }
   function contractAddress(): Hex {
-    const address = config.ARENA_CONTRACT_ADDRESS;
+    const address = resolved.arenaContractAddress;
     if (!address || !isAddress(address))
-      throw new Error('Deploy the contract and configure ARENA_CONTRACT_ADDRESS.');
+      throw new Error(`Deploy the contract and configure the ${profile.id} arena address.`);
     return address;
   }
+  async function assertChain() {
+    const actualChainId = await rpc.getChainId();
+    if (actualChainId !== profile.chainId)
+      throw new Error(
+        `RPC chain ID ${actualChainId} does not match ${profile.name} (${profile.chainId}).`,
+      );
+  }
   async function assertTestnet() {
-    if ((await rpc.getChainId()) !== 968) throw new Error('RPC is not BOT testnet (968).');
+    if (profile.id !== 'testnet')
+      throw new Error(`This operation is testnet-only; selected profile is ${profile.id}.`);
+    await assertChain();
   }
   async function assertOperator(address: Hex) {
-    await assertTestnet();
+    await assertChain();
     const wallet = signer();
     const owner = await rpc.readContract({ address, abi, functionName: 'operator' });
     if (owner.toLowerCase() !== wallet.account.address.toLowerCase())
@@ -82,18 +96,18 @@ export function createChain(config: ChainConfig) {
       args,
       account: wallet.account,
     } as any);
-    const hash = await wallet.writeContract(request);
+    const hash = await wallet.writeContract({ ...request, account: wallet.account });
     onHash(hash);
     const receipt = await rpc.waitForTransactionReceipt({
       hash,
-      confirmations: 2,
-      timeout: 45_000,
+      confirmations: profile.transactionConfirmations,
+      timeout: 120_000,
     });
     if (receipt.status !== 'success') throw new Error('Contract transaction reverted.');
     return hash;
   }
   async function recentStats() {
-    await assertTestnet();
+    await assertChain();
     const latest = await rpc.getBlock();
     const size = latest.number < 24n ? Number(latest.number) + 1 : 24;
     const blocks = [];
@@ -139,14 +153,17 @@ export function createChain(config: ChainConfig) {
   }
 
   async function collectEvidence(start: number, end: number): Promise<Evidence> {
-    await assertTestnet();
+    await assertChain();
     const latest = await rpc.getBlock({ blockTag: 'latest' });
-    // Keep a 12-block buffer so the end boundary is not at the unstable tip.
-    if (latest.number < 12n) throw new Error('Waiting for testnet confirmations.');
-    const safe = latest.number - 12n;
+    const confirmations = BigInt(profile.confirmationsRequired);
+    if (latest.number < confirmations)
+      throw new Error(`Waiting for ${profile.confirmationsRequired} ${profile.name} confirmations.`);
+    const safe = latest.number - confirmations;
     const safeBlock = await rpc.getBlock({ blockNumber: safe });
     if (Number(safeBlock.timestamp) < end)
-      throw new Error('Waiting for the observation end to have 12 confirmations.');
+      throw new Error(
+        `Waiting for the observation end to have ${profile.confirmationsRequired} confirmations.`,
+      );
     const timestamp = async (n: bigint) =>
       Number((await rpc.getBlock({ blockNumber: n })).timestamp);
     const [first, boundary] = await Promise.all([
@@ -185,13 +202,14 @@ export function createChain(config: ChainConfig) {
     if (recheck.hash !== endBlock.hash) throw new Error('Canonical boundary changed; retrying.');
     return {
       schema: 'forecast-arena/outcome-v1',
-      chainId: 968,
+      chainId: profile.chainId,
       observationStart: start,
       observationEnd: end,
       collectedAt: Math.floor(Date.now() / 1000),
-      source: config.BOT_RPC_URL ? 'Configured BOT testnet RPC' : 'https://rpc.bohr.life',
+      source:
+        resolved.rpcUrl === profile.rpcUrl ? profile.rpcUrl : `Configured ${profile.name} RPC`,
       method:
-        'Count every transaction in canonical blocks with start <= block.timestamp < end; reverted transactions included. End boundary has at least 12 successor blocks.',
+        `Count every transaction in canonical blocks with start <= block.timestamp < end; reverted transactions included. End boundary has at least ${profile.confirmationsRequired} successor blocks.`,
       previousBlock: previous
         ? {
             number: previous.number.toString(),
@@ -209,11 +227,17 @@ export function createChain(config: ChainConfig) {
     };
   }
   return {
-    botTestnet,
+    profile,
+    features,
+    credentialsConfigured,
+    arenaAddress: resolved.arenaContractAddress || null,
+    botChain,
+    botTestnet: botChain,
     rpc,
     abi,
     signer,
     contractAddress,
+    assertChain,
     assertTestnet,
     assertOperator,
     send,

@@ -8,9 +8,54 @@
   "durable_objects": { "bindings": [{ "name": "ARENA", "class_name": "ArenaWorker" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ArenaWorker"] }],
   "vars": {
+    "CHAIN_PROFILE": "testnet",
+    "CHAIN_CONFIRMATIONS": "12",
     "BOT_RPC_URL": "https://rpc.bohr.life",
     "ARENA_CONTRACT_ADDRESS": "0xcd8da7961c607ad246dfb4a74ba2d07de38df346",
     "GROQ_MODEL_A": "openai/gpt-oss-120b",
     "GROQ_MODEL_B": "openai/gpt-oss-20b",
+  },
+  "env": {
+    "staging": {
+      "name": "predictbot-api-staging",
+      "main": "cloudflare/worker.ts",
+      "durable_objects": {
+        "bindings": [{ "name": "ARENA", "class_name": "StagingArenaWorker" }]
+      },
+      "migrations": [
+        { "tag": "v1", "new_sqlite_classes": ["StagingArenaWorker"] }
+      ],
+      "vars": {
+        "CHAIN_PROFILE": "staging",
+        "CHAIN_CONFIRMATIONS": "12",
+        "BOT_RPC_URL": "https://rpc.bohr.life",
+        "ARENA_CONTRACT_ADDRESS": "",
+        "STAGING_CHAIN_CONFIRMATIONS": "12",
+        "STAGING_BOT_RPC_URL": "https://rpc.bohr.life",
+        "GROQ_MODEL_A": "openai/gpt-oss-120b",
+        "GROQ_MODEL_B": "openai/gpt-oss-20b",
+      },
+    },
+    "mainnet": {
+      "name": "predictbot-api-mainnet",
+      "main": "cloudflare/worker.ts",
+      "durable_objects": {
+        "bindings": [{ "name": "ARENA", "class_name": "MainnetArenaWorker" }]
+      },
+      "migrations": [
+        { "tag": "v1", "new_sqlite_classes": ["MainnetArenaWorker"] }
+      ],
+      "vars": {
+        "CHAIN_PROFILE": "mainnet",
+        "CHAIN_CONFIRMATIONS": "12",
+        "BOT_RPC_URL": "https://rpc.bohr.life",
+        "ARENA_CONTRACT_ADDRESS": "",
+        "MAINNET_CHAIN_CONFIRMATIONS": "12",
+        "BOT_MAINNET_RPC_URL": "https://rpc.botchain.ai",
+        "FEATURE_MAINNET_ONCHAIN": "false",
+        "GROQ_MODEL_A": "openai/gpt-oss-120b",
+        "GROQ_MODEL_B": "openai/gpt-oss-20b",
+      },
+    },
   },
 }

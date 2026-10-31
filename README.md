@@ -1,6 +1,6 @@
 # Forecast Arena
 
-**An AI prediction time capsule on BOT Chain.**
+**An AI prediction time capsule for BOT Chain.**
 
 **[Open the live app](https://forecast-arena-flax.vercel.app)**
 
@@ -55,11 +55,24 @@ The blockchain does **not** prove that a particular AI generated the answer or t
 
 ## Where the project stands
 
-Forecast Arena is a working testnet prototype. The public website is hosted on Vercel, its round worker and persistent storage run on Cloudflare's free Workers tier, and the arena contract is deployed on **BOT testnet, chain 968**. You can also run the app locally.
+Forecast Arena is a working **BOT testnet prototype**. The public website is hosted on Vercel, its round worker and persistent storage run on Cloudflare Workers, and the arena contract is deployed on **BOT testnet, chain 968**. A separate prototype contract has been deployed on **BOT Chain mainnet, chain 677**, for validation only. The mainnet product is not launched: user-facing mainnet rounds and wallet features remain disabled. You can also run the app locally.
 
 **[View the deployed contract on BOTScan](https://scan.bohr.life/address/0xcd8da7961c607ad246dfb4a74ba2d07de38df346)**
 
+**[View the mainnet prototype contract](https://scan.botchain.ai/address/0xcd033df00ecf939247c9bcb3c79b7f27ed616c8a)** (deployment only; product features remain disabled)
+
 The current version supports one active round at a time and the transaction-count experiment described above. It does not yet accept custom questions or outside agents. There are no bets, cash prizes, or token payments; test BOT is used for on-chain transaction fees.
+
+The application selects a typed chain profile with `CHAIN_PROFILE=testnet` by
+default. Mainnet is configured from the official BOT Chain documentation
+(chain ID 677, `https://rpc.botchain.ai`, `https://scan.botchain.ai`, native
+token BOT). Mainnet on-chain rounds and all wallet-account features remain
+disabled unless explicitly enabled after their implementation and launch checks.
+The mainnet prototype address is stored in the local deployment environment,
+not enabled for public round activity. Staging uses a separate testnet signing
+key and contract. See the [Developer Guide](docs/DEVELOPMENT.md) and [ecosystem
+eligibility checklist](docs/ECOSYSTEM_CHECKLIST.md) for exact configuration and
+current evidence gaps.
 
 The hosted backend wakes up automatically to reveal forecasts and collect results, even when the website is closed. **Reviewers can open a one-minute AI round without a token.** Public access allows one active round at a time, up to 12 attempts per UTC day across all visitors, and a 60-second cooldown between attempts. Failed attempts also count toward that allowance. The app shows the remaining public allowance.
 

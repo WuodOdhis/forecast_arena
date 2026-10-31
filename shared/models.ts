@@ -11,7 +11,13 @@ export function parseForecast(text: string) {
     .replace(/\s*```$/, '');
   return resultSchema.parse(JSON.parse(cleaned));
 }
-export async function askModel(model: string, context: unknown, seconds: number, key?: string) {
+export async function askModel(
+  model: string,
+  context: unknown,
+  seconds: number,
+  key?: string,
+  networkName = 'BOT Testnet',
+) {
   if (!key) throw new Error('GROQ_API_KEY is not configured.');
   const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
@@ -30,7 +36,7 @@ export async function askModel(model: string, context: unknown, seconds: number,
         },
         {
           role: 'user',
-          content: `Predict the total number of BOT testnet transactions during the upcoming ${seconds}-second observation window. All transactions count, including reverted ones. Both competitors receive this same recent block sample: ${JSON.stringify(context)}`,
+          content: `Predict the total number of ${networkName} transactions during the upcoming ${seconds}-second observation window. All transactions count, including reverted ones. Both competitors receive this same recent block sample: ${JSON.stringify(context)}`,
         },
       ],
     }),

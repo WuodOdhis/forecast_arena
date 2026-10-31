@@ -9,7 +9,7 @@ export default defineConfig({
     baseURL: 'http://127.0.0.1:5173',
     headless: true,
     launchOptions: {
-      executablePath: process.env.CHROME_PATH || '/usr/bin/google-chrome',
+      executablePath: process.env.CHROME_PATH,
       args: ['--no-sandbox'],
     },
   },

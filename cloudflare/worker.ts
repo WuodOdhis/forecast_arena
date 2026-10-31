@@ -126,7 +126,8 @@ export class ArenaWorker {
       this.store,
       this.chain,
       { ...env, deferSettlement: true },
-      (model, context, seconds) => askModel(model, context, seconds, env.GROQ_API_KEY),
+      (model, context, seconds) =>
+        askModel(model, context, seconds, env.GROQ_API_KEY, this.chain.profile.name),
     );
   }
 
@@ -139,7 +140,10 @@ export class ArenaWorker {
 
   private publicEnabled() {
     return Boolean(
-      this.env.GROQ_API_KEY && this.env.DEPLOYER_PRIVATE_KEY && this.env.ARENA_CONTRACT_ADDRESS,
+      this.env.GROQ_API_KEY &&
+        this.chain.credentialsConfigured.wallet &&
+        this.chain.credentialsConfigured.contract &&
+        (this.chain.profile.id !== 'mainnet' || this.chain.features.mainnetOnchain),
     );
   }
 
@@ -153,7 +157,7 @@ export class ArenaWorker {
           this.chain.rpc.getBlock(),
         ]);
         this.network = {
-          connected: chainId === 968,
+          connected: chainId === this.chain.profile.chainId,
           blockNumber: block.number.toString(),
           timestamp: Number(block.timestamp),
           checkedAt: Date.now(),
@@ -212,15 +216,17 @@ export class ArenaWorker {
           samples: this.samples,
           configured: {
             groq: Boolean(this.env.GROQ_API_KEY),
-            wallet: Boolean(this.env.DEPLOYER_PRIVATE_KEY),
-            contract: Boolean(this.env.ARENA_CONTRACT_ADDRESS),
+            ...this.chain.credentialsConfigured,
           },
           authRequired: true,
           permissions: { operator: authorized(request, this.env.ADMIN_TOKEN) },
           publicRounds: { ...publicRoundStatus(this.publicUsage()), enabled: this.publicEnabled() },
-          chainId: 968,
-          explorer: 'https://scan.bohr.life',
-          contract: this.env.ARENA_CONTRACT_ADDRESS || null,
+          chainId: this.chain.profile.chainId,
+          networkName: this.chain.profile.name,
+          chainProfile: this.chain.profile.id,
+          explorer: this.chain.profile.explorerBaseUrl,
+          features: this.chain.features,
+          contract: this.chain.arenaAddress,
           serverTime: Date.now(),
           hosting: 'cloudflare',
         });
@@ -312,6 +318,7 @@ export class ArenaWorker {
           return Response.json({ imported: records.length });
         }
       }
+
       return Response.json({ error: 'Not found.' }, { status: 404 });
     } catch (error) {
       if (error instanceof PublicAccessError) {
@@ -335,4 +342,9 @@ export class ArenaWorker {
       return Response.json({ error: message }, { status: 400 });
     }
   }
+
 }
+
+export class StagingArenaWorker extends ArenaWorker {}
+
+export class MainnetArenaWorker extends ArenaWorker {}
