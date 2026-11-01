@@ -2,6 +2,7 @@ import {
   createPublicClient,
   createWalletClient,
   defineChain,
+  formatEther,
   http,
   isAddress,
   parseAbi,
@@ -39,15 +40,33 @@ export function createChain(config: ChainConfig) {
     }),
   });
   const abi = parseAbi([
+    'event RoundCreated(uint256 indexed roundId, address indexed creator, bytes32 rulesHash, uint64 commitDeadline, uint64 revealDeadline, uint64 observationStart, uint64 observationEnd)',
+    'event HumanCommitted(uint256 indexed roundId, address indexed submitter, bytes32 commitment)',
+    'event HumanRevealed(uint256 indexed roundId, address indexed submitter, uint256 value)',
+    'event HumanMissedReveal(uint256 indexed roundId, address indexed submitter)',
+    'event Cancelled(uint256 indexed roundId)',
+    'event Settled(uint256 indexed roundId, uint256 outcome, bytes32 evidenceHash)',
     'function operator() view returns (address)',
+    'function pauser() view returns (address)',
+    'function roundCreator() view returns (address)',
+    'function paused() view returns (bool)',
     'function nextRoundId() view returns (uint256)',
     'function rounds(uint256) view returns (bytes32 rulesHash, uint64 commitDeadline, uint64 revealDeadline, uint64 observationStart, uint64 observationEnd, bool settled, bool cancelled, uint256 outcome, bytes32 evidenceHash)',
     'function predictions(uint256, bytes32) view returns (address submitter, bytes32 commitment, uint256 value, bool revealed)',
+    'function humanPredictions(uint256, address) view returns (bytes32 commitment, uint256 value, bool revealed, bool missed)',
     'function createRound(bytes32, uint64, uint64, uint64, uint64) returns (uint256)',
+    'function createUserRound(bytes32, uint64, uint64, uint64, uint64) returns (uint256)',
     'function commit(uint256, bytes32, bytes32)',
     'function reveal(uint256, bytes32, uint256, bytes32)',
+    'function commitHuman(uint256, bytes32)',
+    'function revealHuman(uint256, uint256, bytes32)',
     'function settle(uint256, uint256, bytes32)',
     'function cancel(uint256)',
+    'function markMissedReveal(uint256, bytes32)',
+    'function markHumanMissedReveal(uint256, address)',
+    'function pause()',
+    'function unpause()',
+    'function setAccessControls(address, address)',
   ]);
   function signer() {
     const key = resolved.deployerPrivateKey;
@@ -80,6 +99,18 @@ export function createChain(config: ChainConfig) {
     const owner = await rpc.readContract({ address, abi, functionName: 'operator' });
     if (owner.toLowerCase() !== wallet.account.address.toLowerCase())
       throw new Error("Configured wallet is not this contract's operator.");
+  }
+  async function assertRoundFunding() {
+    const account = signer().account;
+    const [balance, gasPrice] = await Promise.all([
+      rpc.getBalance({ address: account.address }),
+      rpc.getGasPrice(),
+    ]);
+    const requiredReserve = 1_000_000n * gasPrice;
+    if (balance < requiredReserve)
+      throw new Error(
+        `Operator ${account.address} has ${formatEther(balance)} ${profile.nativeCurrency.symbol}; an AI round needs a reserve of at least ${formatEther(requiredReserve)} ${profile.nativeCurrency.symbol} at the current gas price. Fund the operator wallet; your connected wallet does not pay these server-submitted transactions.`,
+      );
   }
   async function send(
     address: Hex,
@@ -240,6 +271,7 @@ export function createChain(config: ChainConfig) {
     assertChain,
     assertTestnet,
     assertOperator,
+    assertRoundFunding,
     send,
     recentStats,
     lowerBoundTimestamp,

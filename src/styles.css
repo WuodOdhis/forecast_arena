@@ -98,13 +98,19 @@ h3 {
   line-height: 1.15;
 }
 .brand-icon {
-  background: #c7eed6;
-  color: #153c2a;
+  background: #000;
   height: 38px;
   width: 38px;
   border-radius: 7px;
-  display: grid;
-  place-items: center;
+  display: block;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.brand-icon img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 .brand-sub {
   display: block;
@@ -502,6 +508,43 @@ main {
   font-family: var(--mono);
   font-size: 27px;
   font-weight: 500;
+}
+.human-prediction {
+  display: grid;
+  gap: 12px;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--line);
+}
+.human-prediction h3 {
+  margin: 0 0 5px;
+  font-size: 14px;
+}
+.human-prediction p {
+  margin: 0;
+  color: #6c7a72;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.human-prediction-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.human-prediction-controls label {
+  color: #55665d;
+  font-size: 12px;
+}
+.human-prediction-controls input {
+  width: 130px;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid #d3ddd6;
+  border-radius: 5px;
+  font: inherit;
+}
+.human-prediction .chain-link {
+  width: fit-content;
 }
 .tabs {
   display: flex;
@@ -1040,6 +1083,22 @@ td small {
 .setting-row > div:first-child {
   flex: 1;
 }
+.wallet-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.account-data-actions {
+  justify-content: flex-start;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+.setting-note {
+  margin: 0;
+  color: #8a988e;
+  font-size: 11px;
+}
 .setting-row h3 {
   margin-bottom: 6px;
 }
@@ -1356,6 +1415,12 @@ select {
   .network-status {
     font-size: 9px;
   }
+  .header-wallet-button {
+    min-height: 31px;
+    padding: 6px 9px;
+    gap: 5px;
+    font-size: 10px;
+  }
   .avatar {
     display: none;
   }
@@ -1379,6 +1444,13 @@ select {
     font-size: 11px;
     padding: 8px 11px;
     min-height: 35px;
+  }
+  .human-prediction-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .human-prediction-controls input {
+    width: 100%;
   }
   .metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));

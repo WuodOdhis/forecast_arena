@@ -22,8 +22,17 @@ export function createArena(
   config: ArenaConfig,
   askModel: (model: string, context: unknown, seconds: number) => ReturnType<typeof modelRequest>,
 ) {
-  const { abi, assertOperator, collectEvidence, contractAddress, recentStats, rpc, send, signer } =
-    chain;
+  const {
+    abi,
+    assertOperator,
+    assertRoundFunding,
+    collectEvidence,
+    contractAddress,
+    recentStats,
+    rpc,
+    send,
+    signer,
+  } = chain;
 
   let queue: Promise<unknown> = Promise.resolve();
   function exclusive<T>(job: () => Promise<T>): Promise<T> {
@@ -49,6 +58,7 @@ export function createArena(
       if (!config.GROQ_API_KEY)
         throw new Error('Configure GROQ_API_KEY before opening an AI round.');
       await assertOperator(address);
+      await assertRoundFunding();
     }
     const context = await recentStats();
     const forecasts: Forecast[] = [];

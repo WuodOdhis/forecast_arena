@@ -7,14 +7,17 @@
     "dev": "concurrently -k \"tsx watch server/index.ts\" \"vite --host 127.0.0.1\"",
     "build": "tsc --noEmit && vite build",
     "start": "tsx server/index.ts",
+    "backup:local": "tsx scripts/backup-local.ts",
+    "backup:d1": "tsx scripts/backup-d1.ts",
     "pretest": "forge build",
-    "test": "tsx --test server/*.test.ts",
+    "test": "tsx --test server/*.test.ts src/*.test.ts",
     "test:e2e": "playwright test",
     "contracts:build": "forge build",
     "contracts:test": "forge test -vv",
     "deploy:testnet": "tsx scripts/deploy.ts --broadcast-testnet",
     "deploy:check": "tsx scripts/deploy.ts --dry-run",
     "deploy:mainnet": "tsx scripts/deploy.ts --broadcast-mainnet",
+    "verify:round": "tsx scripts/verify-round.ts",
     "worker:dev": "wrangler dev --port 8787",
     "worker:deploy": "wrangler deploy",
     "worker:deploy:staging": "wrangler deploy --env staging",
@@ -24,7 +27,8 @@
     "worker:check:mainnet": "wrangler deploy --dry-run --env mainnet"
   },
   "dependencies": {
-    "better-sqlite3": "^11.10.0",
+    "@walletconnect/ethereum-provider": "2.26.0",
+    "better-sqlite3": "^13.0.3",
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
     "lucide-react": "^0.468.0",
@@ -47,5 +51,8 @@
     "typescript": "~5.8.3",
     "vite": "^6.3.0",
     "wrangler": "^4.156.0"
+  },
+  "overrides": {
+    "zod": "$zod"
   }
 }

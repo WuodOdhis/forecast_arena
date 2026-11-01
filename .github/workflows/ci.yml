@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  staging-health:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check staging Worker health
+        run: |
+          curl --fail --silent --show-error --retry 2 --retry-delay 5 --max-time 15 \
+            https://predictbot-api-staging.victorokoth549.workers.dev/api/health \
+            | jq --exit-status '.status == "ready" and .network.connected == true and .chainId == 968'
+  live-site-api:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check the unchanged Vercel API proxy (BOT Testnet)
+        run: |
+          curl --fail --silent --show-error --retry 2 --retry-delay 5 --max-time 15 \
+            https://forecast-arena-flax.vercel.app/api/status \
+            | jq --exit-status '.network.connected == true and .chainId == 968 and (.contract | type == "string" and length > 0)'
+  validate:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: foundry-rs/foundry-toolchain@v1
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      - run: forge test -vv
+      - run: npm audit --audit-level=high
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test e2e/wallet-auth.spec.ts e2e/wallet-prediction.spec.ts e2e/public-reviewer.spec.ts

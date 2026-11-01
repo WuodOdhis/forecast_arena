@@ -1,8 +1,11 @@
 import type {
+  D1Database,
   DurableObjectNamespace,
   DurableObjectState,
   Request as WorkerRequest,
 } from '@cloudflare/workers-types';
+import { createD1WalletAuthStore } from '../shared/d1-wallet-store.js';
+import { createD1AccountStore } from '../shared/d1-account-store.js';
 import { timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { createArena, type RoundStore } from '../shared/arena.js';
@@ -16,9 +19,19 @@ import {
   reservePublicRound,
   type PublicUsage,
 } from '../shared/public-access.js';
+import {
+  createWalletAuth,
+  readWalletSessionCookie,
+  walletSessionCookie,
+  type WalletAuthStore,
+  type WalletChallenge,
+  type WalletSession,
+  WalletAuthError,
+} from '../shared/wallet-auth.js';
 
 interface Env extends ChainConfig {
   ARENA: DurableObjectNamespace;
+  DB?: D1Database;
   GROQ_API_KEY?: string;
   GROQ_MODEL_A?: string;
   GROQ_MODEL_B?: string;
@@ -45,11 +58,18 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const origin = request.headers.get('origin');
     const allowed = (env.ALLOWED_ORIGINS || '').split(',').filter(Boolean);
-    const headers = new Headers({ 'Cache-Control': 'no-store', Vary: 'Origin' });
+    const requestId = crypto.randomUUID();
+    const headers = new Headers({
+      'Cache-Control': 'no-store',
+      Vary: 'Origin',
+      'X-Request-ID': requestId,
+    });
     if (origin && allowed.includes(origin)) {
       headers.set('Access-Control-Allow-Origin', origin);
       headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
       headers.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      headers.set('Access-Control-Allow-Credentials', 'true');
+      headers.set('Access-Control-Expose-Headers', 'X-Request-ID');
     } else if (origin) {
       return Response.json(
         { error: 'This website is not an allowed origin.' },
@@ -59,15 +79,29 @@ export default {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers });
     if (!['GET', 'POST'].includes(request.method))
       return Response.json({ error: 'Method not allowed.' }, { status: 405, headers });
-    const publicCreation = new URL(request.url).pathname === '/api/rounds';
-    if (request.method === 'POST' && !publicCreation && !authorized(request, env.ADMIN_TOKEN)) {
+    const path = new URL(request.url).pathname;
+    const publicCreation =
+      path === '/api/rounds' ||
+      path.startsWith('/api/account/') ||
+      path === '/api/rounds/user-created' ||
+      path.startsWith('/api/rounds/user-created/');
+    const walletAuthRoute = path.startsWith('/api/auth/');
+    if (
+      request.method === 'POST' &&
+      !publicCreation &&
+      !walletAuthRoute &&
+      !authorized(request, env.ADMIN_TOKEN)
+    ) {
       return Response.json(
         { error: 'Enter the operator access token in Settings.' },
         { status: 401, headers },
       );
     }
     const object = env.ARENA.get(env.ARENA.idFromName('predictbot-arena-v1'));
-    const response = await object.fetch(request as unknown as WorkerRequest);
+    const requestHeaders = new Headers(request.headers);
+    requestHeaders.set('X-Request-ID', requestId);
+    const forwarded = new Request(request, { headers: requestHeaders });
+    const response = await object.fetch(forwarded as unknown as WorkerRequest);
     response.headers.forEach((value, key) => headers.set(key, value));
     return new Response(response.body as unknown as ReadableStream, {
       status: response.status,
@@ -80,6 +114,9 @@ export class ArenaWorker {
   private store: RoundStore;
   private chain: ReturnType<typeof createChain>;
   private arena: ReturnType<typeof createArena>;
+  private walletAuthStore: WalletAuthStore;
+  private accountStore?: ReturnType<typeof createD1AccountStore>;
+  private walletAuth: ReturnType<typeof createWalletAuth>;
   private samples: { block: string; timestamp: number; transactions: number }[] = [];
   private network: {
     connected: boolean;
@@ -100,6 +137,135 @@ export class ArenaWorker {
     sql.exec(
       'CREATE TABLE IF NOT EXISTS public_usage (id INTEGER PRIMARY KEY CHECK(id = 1), body TEXT NOT NULL)',
     );
+    sql.exec(`
+      CREATE TABLE IF NOT EXISTS wallet_challenges (
+        nonce_hash TEXT PRIMARY KEY,
+        address TEXT NOT NULL,
+        origin TEXT NOT NULL,
+        chain_id INTEGER NOT NULL DEFAULT 0,
+        message TEXT NOT NULL,
+        issued_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL
+      )
+    `);
+    const challengeColumns = sql
+      .exec<{ name: string }>('PRAGMA table_info(wallet_challenges)')
+      .toArray();
+    if (!challengeColumns.some((column) => column.name === 'chain_id'))
+      sql.exec('ALTER TABLE wallet_challenges ADD COLUMN chain_id INTEGER NOT NULL DEFAULT 0');
+    sql.exec(`
+      CREATE TABLE IF NOT EXISTS wallet_auth_attempts (
+        address TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      )
+    `);
+    sql.exec(`
+      CREATE TABLE IF NOT EXISTS wallet_sessions (
+        token_hash TEXT PRIMARY KEY,
+        address TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL
+      )
+    `);
+    const durableWalletAuthStore: WalletAuthStore = {
+      issueChallenge: (challenge, limit, windowStart) => {
+        sql.exec('DELETE FROM wallet_auth_attempts WHERE created_at < ?', windowStart);
+        sql.exec('DELETE FROM wallet_challenges WHERE expires_at <= ?', challenge.issuedAt);
+        const attempts = sql
+          .exec<{ count: number }>(
+            'SELECT COUNT(*) AS count FROM wallet_auth_attempts WHERE address = ? AND created_at >= ?',
+            challenge.address,
+            windowStart,
+          )
+          .toArray()[0]?.count ?? 0;
+        if (attempts >= limit) return false;
+        sql.exec(
+          'INSERT INTO wallet_auth_attempts (address, created_at) VALUES (?, ?)',
+          challenge.address,
+          challenge.issuedAt,
+        );
+        sql.exec(
+          `INSERT INTO wallet_challenges
+           (nonce_hash, address, origin, chain_id, message, issued_at, expires_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          challenge.nonceHash,
+          challenge.address,
+          challenge.origin,
+          challenge.chainId,
+          challenge.message,
+          challenge.issuedAt,
+          challenge.expiresAt,
+        );
+        return true;
+      },
+      findChallenge: (nonceHash) => {
+        const row = sql
+          .exec<{
+            nonceHash: string;
+            address: string;
+            origin: string;
+            chainId: number;
+            message: string;
+            issuedAt: number;
+            expiresAt: number;
+          }>(
+            `SELECT nonce_hash AS nonceHash, address, origin, chain_id AS chainId, message,
+                    issued_at AS issuedAt, expires_at AS expiresAt
+             FROM wallet_challenges WHERE nonce_hash = ?`,
+            nonceHash,
+          )
+          .toArray()[0];
+        return row as WalletChallenge | undefined;
+      },
+      completeLogin: (nonceHash, address, now, session) => {
+        const challenge = sql
+          .exec(
+            'SELECT nonce_hash FROM wallet_challenges WHERE nonce_hash = ? AND address = ? AND expires_at > ?',
+            nonceHash,
+            address,
+            now,
+          )
+          .toArray()[0];
+        if (!challenge) return false;
+        sql.exec('DELETE FROM wallet_challenges WHERE nonce_hash = ?', nonceHash);
+        sql.exec('DELETE FROM wallet_sessions WHERE expires_at <= ?', now);
+        sql.exec(
+          'INSERT INTO wallet_sessions VALUES (?, ?, ?, ?)',
+          session.tokenHash,
+          session.address,
+          session.createdAt,
+          session.expiresAt,
+        );
+        return true;
+      },
+      getSession: (tokenHash, now) => {
+        const session = sql
+          .exec<{
+            tokenHash: string;
+            address: string;
+            createdAt: number;
+            expiresAt: number;
+          }>(
+            'SELECT token_hash AS tokenHash, address, created_at AS createdAt, expires_at AS expiresAt FROM wallet_sessions WHERE token_hash = ? AND expires_at > ?',
+            tokenHash,
+            now,
+          )
+          .toArray()[0];
+        if (!session) sql.exec('DELETE FROM wallet_sessions WHERE token_hash = ?', tokenHash);
+        return session as WalletSession | undefined;
+      },
+      deleteSession: (tokenHash) => {
+        sql.exec('DELETE FROM wallet_sessions WHERE token_hash = ?', tokenHash);
+      },
+    };
+    this.chain = createChain(env);
+    if (this.chain.features.d1Persistence) {
+      if (!env.DB) throw new Error('D1 persistence is enabled but the DB binding is missing.');
+      this.walletAuthStore = createD1WalletAuthStore(env.DB);
+      this.accountStore = createD1AccountStore(env.DB);
+    } else {
+      this.walletAuthStore = durableWalletAuthStore;
+    }
     this.store = {
       save: (round) => {
         sql.exec(
@@ -121,7 +287,12 @@ export class ArenaWorker {
         return row ? JSON.parse(row.body) : undefined;
       },
     };
-    this.chain = createChain(env);
+    this.walletAuth = createWalletAuth(
+      this.walletAuthStore,
+      this.chain.profile.chainId,
+      (env.ALLOWED_ORIGINS || '').split(',').map((value) => value.trim()).filter(Boolean),
+      true,
+    );
     this.arena = createArena(
       this.store,
       this.chain,
@@ -209,6 +380,123 @@ export class ArenaWorker {
   async fetch(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname;
     try {
+      if (request.method === 'GET' && path === '/api/health') {
+        await this.refreshNetwork();
+        const ready = this.network.connected;
+        return Response.json(
+          {
+            status: ready ? 'ready' : 'degraded',
+            network: this.network,
+            chainId: this.chain.profile.chainId,
+            networkName: this.chain.profile.name,
+          },
+          { status: ready ? 200 : 503 },
+        );
+      }
+      if (path.startsWith('/api/auth/')) {
+        if (!this.chain.features.walletAuth)
+          return Response.json(
+            { error: 'Wallet sign-in is disabled in this environment.' },
+            { status: 404 },
+          );
+        const secure = new URL(request.url).protocol === 'https:';
+        const cookieToken = () =>
+          readWalletSessionCookie(request.headers.get('cookie'), secure);
+        const origin = () => {
+          const value = request.headers.get('origin');
+          if (!value) throw new WalletAuthError('A browser origin is required.', 403);
+          return this.walletAuth.validateOrigin(value);
+        };
+        if (request.method === 'GET' && path === '/api/auth/session') {
+          return Response.json({ session: (await this.walletAuth.session(cookieToken())) ?? null });
+        }
+        if (request.method === 'POST' && path === '/api/auth/nonce') {
+          const input = z.object({ address: z.string().min(1).max(64) }).strict().parse(
+            await readRoundJson(request),
+          );
+          return Response.json(await this.walletAuth.issueChallenge(input.address, origin()));
+        }
+        if (request.method === 'POST' && path === '/api/auth/verify') {
+          const input = z
+            .object({
+              address: z.string().min(1).max(64),
+              nonce: z.string().regex(/^[0-9a-f]{64}$/),
+              signature: z.string().regex(/^0x(?:[0-9a-fA-F]{128}|[0-9a-fA-F]{130})$/),
+            })
+            .strict()
+            .parse(await readRoundJson(request));
+          const { token, address, expiresAt } = await this.walletAuth.verify(
+            input.address,
+            input.nonce,
+            input.signature as `0x${string}`,
+            origin(),
+          );
+          return Response.json(
+            { session: { address, expiresAt } },
+            {
+              headers: {
+                'Set-Cookie': walletSessionCookie(token, secure),
+                'Cache-Control': 'no-store',
+              },
+            },
+          );
+        }
+        if (request.method === 'POST' && path === '/api/auth/logout') {
+          origin();
+          await this.walletAuth.logout(cookieToken());
+          return Response.json(
+            { ok: true },
+            {
+              headers: {
+                'Set-Cookie': walletSessionCookie('', secure, true),
+                'Cache-Control': 'no-store',
+              },
+            },
+          );
+        }
+        return Response.json({ error: 'Not found.' }, { status: 404 });
+      }
+      if (path.startsWith('/api/account/')) {
+        if (!this.chain.features.walletAuth || !this.accountStore)
+          return Response.json(
+            { error: 'Persistent wallet accounts are disabled in this environment.' },
+            { status: 404 },
+          );
+        const secure = new URL(request.url).protocol === 'https:';
+        const token = readWalletSessionCookie(request.headers.get('cookie'), secure);
+        const session = await this.walletAuth.session(token);
+        if (!session)
+          return Response.json({ error: 'Sign in with your wallet to manage account data.' }, { status: 401 });
+        if (request.method === 'GET' && path === '/api/account/export') {
+          const account = await this.accountStore.export(session.address);
+          if (!account)
+            return Response.json({ error: 'Wallet account was not found.' }, { status: 404 });
+          return Response.json(account, {
+            headers: {
+              'Content-Disposition': `attachment; filename="forecast-arena-account-${session.address.toLowerCase()}.json"`,
+              'Cache-Control': 'no-store',
+            },
+          });
+        }
+        if (request.method === 'POST' && path === '/api/account/delete') {
+          const value = request.headers.get('origin');
+          if (!value) throw new WalletAuthError('A browser origin is required.', 403);
+          this.walletAuth.validateOrigin(value);
+          z.object({ confirm: z.literal(true) }).strict().parse(await readRoundJson(request));
+          if (!(await this.accountStore.delete(session.address)))
+            return Response.json({ error: 'Wallet account was not found.' }, { status: 404 });
+          return Response.json(
+            { deleted: true, publicChainRecordsRetained: true },
+            {
+              headers: {
+                'Set-Cookie': walletSessionCookie('', secure, true),
+                'Cache-Control': 'no-store',
+              },
+            },
+          );
+        }
+        return Response.json({ error: 'Not found.' }, { status: 404 });
+      }
       if (request.method === 'GET' && path === '/api/status') {
         await this.refreshNetwork();
         return Response.json({
@@ -333,6 +621,17 @@ export class ArenaWorker {
           { status: error.status, headers },
         );
       }
+      if (error instanceof WalletAuthError)
+        return Response.json({ error: error.message }, { status: error.status });
+      if (!(error instanceof z.ZodError))
+        console.error(
+          JSON.stringify({
+            event: 'worker_request_failed',
+            requestId: request.headers.get('x-request-id'),
+            route: path,
+            errorType: error instanceof Error ? error.name : 'UnknownError',
+          }),
+        );
       const message =
         error instanceof z.ZodError
           ? 'Invalid request.'

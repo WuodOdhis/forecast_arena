@@ -34,7 +34,16 @@
         "STAGING_BOT_RPC_URL": "https://rpc.bohr.life",
         "GROQ_MODEL_A": "openai/gpt-oss-120b",
         "GROQ_MODEL_B": "openai/gpt-oss-20b",
+        "FEATURE_STAGING_WALLET_AUTH": "true",
+        "FEATURE_STAGING_D1_PERSISTENCE": "true",
       },
+      "d1_databases": [{
+        "binding": "DB",
+        "database_name": "forecast-arena-staging",
+        "database_id": "55d1f837-7f89-4ec0-b905-6c24008ecda7",
+        "migrations_dir": "migrations",
+        "remote": true
+      }],
     },
     "mainnet": {
       "name": "predictbot-api-mainnet",
@@ -56,6 +65,13 @@
         "GROQ_MODEL_A": "openai/gpt-oss-120b",
         "GROQ_MODEL_B": "openai/gpt-oss-20b",
       },
+      "d1_databases": [{
+        "binding": "DB",
+        "database_name": "forecast-arena-prod",
+        "database_id": "9913c09d-1ca0-4ed9-bf5c-7d4f1e86cbd9",
+        "migrations_dir": "migrations",
+        "remote": true
+      }],
     },
   },
 }

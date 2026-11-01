@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
-import { timingSafeEqual } from 'node:crypto';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
@@ -9,6 +9,12 @@ import { phase, publicRound } from './domain.js';
 import { arenaAddress, credentialsConfigured, features, profile, rpc } from './chain.js';
 import * as store from './store.js';
 import {
+  createWalletAuth,
+  readWalletSessionCookie,
+  walletSessionCookie,
+  WalletAuthError,
+} from '../shared/wallet-auth.js';
+import {
   PublicAccessError,
   publicRoundStatus,
   reservePublicRound,
@@ -16,6 +22,11 @@ import {
 
 const app = express();
 app.disable('x-powered-by');
+app.use((req, res, next) => {
+  res.locals.requestId = randomUUID();
+  res.setHeader('X-Request-ID', res.locals.requestId);
+  next();
+});
 app.use(express.json({ limit: '8kb' }));
 app.use('/api', (_req, res, next) => {
   res.setHeader('Cache-Control', 'no-store');
@@ -26,6 +37,24 @@ const configured = () => ({
   wallet: credentialsConfigured.wallet,
   contract: credentialsConfigured.contract,
 });
+const walletAuth = createWalletAuth(
+  store.walletAuth,
+  profile.chainId,
+  (process.env.ALLOWED_ORIGINS || '').split(',').map((origin) => origin.trim()).filter(Boolean),
+  process.env.NODE_ENV !== 'production',
+);
+const walletAuthCookie = (req: express.Request) =>
+  readWalletSessionCookie(req.headers.cookie || null, process.env.NODE_ENV === 'production');
+function requireWalletAuth(res: express.Response) {
+  if (features.walletAuth) return false;
+  res.status(404).json({ error: 'Wallet sign-in is disabled in this environment.' });
+  return true;
+}
+function requestOrigin(req: express.Request) {
+  const origin = req.get('origin');
+  if (!origin) throw new WalletAuthError('A browser origin is required.', 403);
+  return walletAuth.validateOrigin(origin);
+}
 function isOperator(req: express.Request) {
   const token = process.env.ADMIN_TOKEN;
   if (!token)
@@ -84,6 +113,81 @@ app.get('/api/status', (req, res) =>
     serverTime: Date.now(),
   }),
 );
+app.get('/api/health', async (_req, res) => {
+  await checkNetwork();
+  const ready = network.connected;
+  res.status(ready ? 200 : 503).json({
+    status: ready ? 'ready' : 'degraded',
+    network,
+    chainId: profile.chainId,
+    networkName: profile.name,
+  });
+});
+app.post('/api/auth/nonce', (req, res, next) => {
+  try {
+    if (requireWalletAuth(res)) return;
+    const body = z.object({ address: z.string().min(1).max(64) }).strict().parse(req.body);
+    void walletAuth.issueChallenge(body.address, requestOrigin(req)).then(
+      (challenge) => res.json(challenge),
+      next,
+    );
+  } catch (error) {
+    next(error);
+  }
+});
+app.post('/api/auth/verify', (req, res, next) => {
+  try {
+    if (requireWalletAuth(res)) return;
+    const body = z
+      .object({
+        address: z.string().min(1).max(64),
+        nonce: z.string().regex(/^[0-9a-f]{64}$/),
+        signature: z.string().regex(/^0x(?:[0-9a-fA-F]{128}|[0-9a-fA-F]{130})$/),
+      })
+      .strict()
+      .parse(req.body);
+    void walletAuth.verify(
+      body.address,
+      body.nonce,
+      body.signature as `0x${string}`,
+      requestOrigin(req),
+    ).then(
+      ({ token, address, expiresAt }) => {
+        res.setHeader(
+          'Set-Cookie',
+          walletSessionCookie(token, process.env.NODE_ENV === 'production'),
+        );
+        res.json({ session: { address, expiresAt } });
+      },
+      next,
+    );
+  } catch (error) {
+    next(error);
+  }
+});
+app.get('/api/auth/session', async (req, res, next) => {
+  try {
+    if (requireWalletAuth(res)) return;
+    const session = await walletAuth.session(walletAuthCookie(req));
+    res.json({ session: session ?? null });
+  } catch (error) {
+    next(error);
+  }
+});
+app.post('/api/auth/logout', (req, res, next) => {
+  try {
+    if (requireWalletAuth(res)) return;
+    requestOrigin(req);
+    walletAuth.logout(walletAuthCookie(req));
+    res.setHeader(
+      'Set-Cookie',
+      walletSessionCookie('', process.env.NODE_ENV === 'production', true),
+    );
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
 app.get('/api/rounds', (_req, res) => res.json(store.all().map((r) => publicRound(r))));
 app.get('/api/rounds/:id/rules', (req, res) => {
   const round = store.get(req.params.id);
@@ -181,7 +285,25 @@ if (existsSync('dist/index.html')) {
   app.get('/{*splat}', (_req, res) => res.sendFile(path.resolve('dist/index.html')));
 }
 app.use(
-  (error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  (
+    error: unknown,
+    req: express.Request,
+    res: express.Response,
+    _next: express.NextFunction,
+  ) => {
+    if (!(error instanceof WalletAuthError || error instanceof PublicAccessError || error instanceof z.ZodError))
+      console.error(
+        JSON.stringify({
+          event: 'request_failed',
+          requestId: res.locals.requestId,
+          route: req.path,
+          errorType: error instanceof Error ? error.name : 'UnknownError',
+        }),
+      );
+    if (error instanceof WalletAuthError) {
+      res.status(error.status).json({ error: error.message });
+      return;
+    }
     if (error instanceof PublicAccessError) {
       if (error.retryAt)
         res.setHeader(

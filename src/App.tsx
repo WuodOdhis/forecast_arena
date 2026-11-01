@@ -23,6 +23,19 @@ import {
   X,
   XCircle,
 } from 'lucide-react';
+import {
+  connectWalletAndSignIn,
+  logoutWalletSession,
+  readHumanPrediction,
+  restoreWalletSession,
+  subscribeWalletChanges,
+  submitHumanCommitment,
+  submitHumanReveal,
+  walletConnectAvailable,
+  type HumanPredictionState,
+  type WalletLoginSession,
+} from './wallet.js';
+import { apiUrl } from './api.js';
 import type { publicRound } from '../server/domain';
 
 type Round = ReturnType<typeof publicRound>;
@@ -194,6 +207,18 @@ export default function App() {
   const [clock, setClock] = useState(Date.now());
   const [offset, setOffset] = useState(0);
   const [token, setToken] = useState(() => sessionStorage.getItem('arena-token') || '');
+  const [walletSession, setWalletSession] = useState<WalletLoginSession>();
+  const [walletAuthError, setWalletAuthError] = useState('');
+  const [walletAuthBusy, setWalletAuthBusy] = useState(false);
+  const [accountBusy, setAccountBusy] = useState(false);
+  const [accountError, setAccountError] = useState('');
+  const [humanPredictionState, setHumanPredictionState] = useState<HumanPredictionState>();
+  const [humanPredictionValue, setHumanPredictionValue] = useState('');
+  const [humanPredictionBusy, setHumanPredictionBusy] = useState(false);
+  const [humanPredictionError, setHumanPredictionError] = useState('');
+  const [humanPredictionTx, setHumanPredictionTx] = useState('');
+  const [humanPredictionSubmitted, setHumanPredictionSubmitted] = useState(false);
+  const [humanPredictionChecked, setHumanPredictionChecked] = useState(false);
   const tokenRef = useRef(token);
   tokenRef.current = token;
   const [boardMode, setBoardMode] = useState<'practice' | 'onchain'>('onchain');
@@ -204,12 +229,25 @@ export default function App() {
       const headers: HeadersInit = tokenRef.current
         ? { Authorization: `Bearer ${tokenRef.current}` }
         : {};
-      const [s, r] = await Promise.all([fetch('/api/status', { headers }), fetch('/api/rounds')]);
+      const [s, r] = await Promise.all([
+        fetch(apiUrl('/api/status'), { headers, credentials: 'include' }),
+        fetch(apiUrl('/api/rounds'), { credentials: 'include' }),
+      ]);
       if (!s.ok || !r.ok) throw new Error('Arena backend is unavailable.');
       const next = (await s.json()) as Status;
       setStatus(next);
       setOffset(next.serverTime - Date.now());
       setRounds(await r.json());
+      if (next.features.walletAuth) {
+        try {
+          const restored = await restoreWalletSession();
+          setWalletSession(restored.session ?? undefined);
+        } catch (e) {
+          setWalletAuthError((e as Error).message);
+        }
+      } else {
+        setWalletSession(undefined);
+      }
       setConnectionError('');
       setLoading(false);
     } catch {
@@ -271,12 +309,13 @@ export default function App() {
     };
   }, [modal, cancelId]);
   const request = async (url: string, body?: unknown) => {
-    const res = await fetch(url, {
+    const res = await fetch(apiUrl(url), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
+      credentials: 'include',
       body: JSON.stringify(body || {}),
     });
     const data = await res.json();
@@ -307,6 +346,107 @@ export default function App() {
       setDuration(60);
     }
   }, [reviewer]);
+  useEffect(() => {
+    let active = true;
+    setHumanPredictionState(undefined);
+    setHumanPredictionSubmitted(false);
+    setHumanPredictionTx('');
+    setHumanPredictionError('');
+    if (
+      !status?.features.humanPredictions ||
+      !walletSession?.address ||
+      round?.mode !== 'onchain' ||
+      !round.chainRoundId ||
+      !round.contractAddress
+    )
+      return () => {
+        active = false;
+      };
+    void readHumanPrediction(
+      status.chainProfile,
+      status.chainId,
+      round.contractAddress,
+      round.chainRoundId,
+      walletSession.address,
+    )
+      .then((prediction) => {
+        if (active) {
+          setHumanPredictionState(prediction);
+          setHumanPredictionSubmitted(prediction.commitment !== `0x${'0'.repeat(64)}`);
+          setHumanPredictionChecked(true);
+        }
+      })
+      .catch((e) => {
+        if (active) {
+          setHumanPredictionError((e as Error).message);
+          setHumanPredictionChecked(true);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [
+    status?.features.humanPredictions,
+    status?.chainProfile,
+    status?.chainId,
+    round?.id,
+    round?.phase,
+    round?.chainRoundId,
+    round?.contractAddress,
+    walletSession?.address,
+  ]);
+  const submitHumanPrediction = async (reveal: boolean) => {
+    if (
+      !status ||
+      !walletSession ||
+      round?.mode !== 'onchain' ||
+      !round.chainRoundId ||
+      !round.contractAddress
+    )
+      return;
+    if (!reveal && !/^(0|[1-9]\d*)$/.test(humanPredictionValue)) {
+      setHumanPredictionError('Enter a non-negative whole-number prediction.');
+      return;
+    }
+    setHumanPredictionBusy(true);
+    setHumanPredictionError('');
+    try {
+      if (reveal) {
+        const tx = await submitHumanReveal(
+          status.chainProfile,
+          status.chainId,
+          round.contractAddress,
+          round.chainRoundId,
+          walletSession.address,
+        );
+        setHumanPredictionTx(tx);
+        setHumanPredictionState((previous) =>
+          previous ? { ...previous, revealed: true } : previous,
+        );
+      } else {
+        const prediction = await submitHumanCommitment(
+          status.chainProfile,
+          status.chainId,
+          round.contractAddress,
+          round.chainRoundId,
+          walletSession.address,
+          Number(humanPredictionValue),
+        );
+        setHumanPredictionTx(prediction.txHash);
+        setHumanPredictionState({
+          commitment: prediction.commitment,
+          revealed: false,
+          missed: false,
+        });
+        setHumanPredictionSubmitted(true);
+      }
+      setHumanPredictionValue('');
+    } catch (e) {
+      setHumanPredictionError((e as Error).message);
+    } finally {
+      setHumanPredictionBusy(false);
+    }
+  };
   const openRound = async () => {
     setBusy(true);
     setError('');
@@ -351,6 +491,104 @@ export default function App() {
       setBusy(false);
     }
   };
+  const connectWallet = async (connector: 'injected' | 'walletconnect') => {
+    if (!status || !status.features.walletAuth) return;
+    setWalletAuthBusy(true);
+    setWalletAuthError('');
+    try {
+      setWalletSession(
+        await connectWalletAndSignIn(status.chainProfile, status.chainId, connector),
+      );
+    } catch (e) {
+      setWalletAuthError((e as Error).message);
+    } finally {
+      setWalletAuthBusy(false);
+    }
+  };
+  const disconnectWallet = async () => {
+    setWalletAuthBusy(true);
+    setWalletAuthError('');
+    try {
+      await logoutWalletSession();
+      setWalletSession(undefined);
+    } catch (e) {
+      setWalletAuthError((e as Error).message);
+    } finally {
+      setWalletAuthBusy(false);
+    }
+  };
+  const exportWalletAccount = async () => {
+    setAccountBusy(true);
+    setAccountError('');
+    try {
+      const response = await fetch(apiUrl('/api/account/export'), { credentials: 'include' });
+      const result = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(result.error || 'Account export failed.');
+      const link = document.createElement('a');
+      const objectUrl = URL.createObjectURL(
+        new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' }),
+      );
+      link.href = objectUrl;
+      link.download = `forecast-arena-account-${walletSession?.address.toLowerCase()}.json`;
+      link.click();
+      URL.revokeObjectURL(objectUrl);
+    } catch (e) {
+      setAccountError((e as Error).message);
+    } finally {
+      setAccountBusy(false);
+    }
+  };
+  const deleteWalletAccount = async () => {
+    if (
+      !window.confirm(
+        'Delete this wallet account and revoke its sessions? Public on-chain records cannot be erased.',
+      )
+    )
+      return;
+    setAccountBusy(true);
+    setAccountError('');
+    try {
+      const response = await fetch(apiUrl('/api/account/delete'), {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm: true }),
+      });
+      const result = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(result.error || 'Account deletion failed.');
+      setWalletSession(undefined);
+      setHumanPredictionState(undefined);
+      setAccountError('');
+    } catch (e) {
+      setAccountError((e as Error).message);
+    } finally {
+      setAccountBusy(false);
+    }
+  };
+  useEffect(() => {
+    const onAccountsChanged = (value: unknown) => {
+      const address = Array.isArray(value) && typeof value[0] === 'string' ? value[0] : '';
+      if (!walletSession || address.toLowerCase() === walletSession.address.toLowerCase()) return;
+      void logoutWalletSession().catch((e) => {
+        setWalletAuthError(`Could not end the previous wallet session: ${(e as Error).message}`);
+      });
+      setWalletSession(undefined);
+      setWalletAuthError('The wallet account changed. Sign in again to continue.');
+    };
+    const onChainChanged = () => {
+      void logoutWalletSession().catch((e) => {
+        setWalletAuthError(`Could not end the previous wallet session: ${(e as Error).message}`);
+      });
+      setWalletSession(undefined);
+      setWalletAuthError('The wallet network changed. Switch back to the configured BOT Chain network.');
+    };
+    const unsubscribeAccounts = subscribeWalletChanges('accountsChanged', onAccountsChanged);
+    const unsubscribeChain = subscribeWalletChanges('chainChanged', onChainChanged);
+    return () => {
+      unsubscribeAccounts();
+      unsubscribeChain();
+    };
+  }, [walletSession?.address]);
   const now = Math.floor((clock + offset) / 1000);
   const deadline = round
     ? round.phase === 'COMMIT'
@@ -404,7 +642,7 @@ export default function App() {
           }}
         >
           <span className="brand-icon">
-            <Fingerprint size={23} />
+            <img src="/forecast-arena-logo.png" alt="" />
           </span>
           <span>
             FORECAST<span className="brand-sub">ARENA</span>
@@ -456,10 +694,36 @@ export default function App() {
           <div className="top-actions">
             <span className="network-status">
               <span className={`status-dot ${status?.network.connected ? 'online' : ''}`} />
-              {status?.network.connected
-                ? `${status.networkName} connected`
-                : `Connecting to ${status?.networkName ?? 'BOT Testnet'}`}
+              {status
+                ? status.network.connected
+                  ? `Network connected · ${status.networkName}`
+                  : `Network unavailable · ${status.networkName}`
+                : 'Checking network…'}
             </span>
+            <span className="network-status">
+              <span className={`status-dot ${walletSession ? 'online' : ''}`} />
+              {!status
+                ? 'Checking wallet status…'
+                : !status.features.walletAuth
+                  ? 'Wallet sign-in disabled'
+                  : walletSession
+                    ? `Wallet signed in · ${short(walletSession.address)}`
+                    : 'Wallet not signed in'}
+            </span>
+            {status?.features.walletAuth && !walletSession && (
+              <button
+                className="secondary-button header-wallet-button"
+                disabled={walletAuthBusy}
+                onClick={() => void connectWallet('injected')}
+              >
+                {walletAuthBusy ? (
+                  <LoaderCircle size={15} className="spin" />
+                ) : (
+                  <ShieldCheck size={15} />
+                )}
+                {walletAuthBusy ? 'Connecting…' : 'Connect wallet'}
+              </button>
+            )}
             <button
               className="icon-button"
               title="Refresh arena"
@@ -668,6 +932,85 @@ export default function App() {
                               : countdown(deadline - now)}
                         </strong>
                       </div>
+                      {round.mode === 'onchain' && status?.features.humanPredictions && (
+                        <section className="human-prediction" aria-labelledby="human-prediction-title">
+                          <div>
+                            <h3 id="human-prediction-title">Your testnet prediction</h3>
+                            <p>
+                              Your wallet sends commit and reveal transactions directly to the
+                              contract. The reveal secret stays in this browser.
+                            </p>
+                          </div>
+                          {!walletSession ? (
+                            <button
+                              className="secondary-button"
+                              disabled={!status.features.walletAuth || walletAuthBusy}
+                              onClick={() => void connectWallet('injected')}
+                            >
+                              {walletAuthBusy ? 'Connecting…' : 'Connect wallet to participate'}
+                            </button>
+                          ) : !humanPredictionChecked ? (
+                            <p role="status">Checking your on-chain prediction…</p>
+                          ) : round.phase === 'COMMIT' &&
+                            !humanPredictionSubmitted &&
+                            !humanPredictionError ? (
+                            <div className="human-prediction-controls">
+                              <label htmlFor="human-prediction-value">
+                                Predicted transaction count
+                              </label>
+                              <input
+                                id="human-prediction-value"
+                                type="number"
+                                min="0"
+                                step="1"
+                                inputMode="numeric"
+                                value={humanPredictionValue}
+                                onChange={(event) => setHumanPredictionValue(event.target.value)}
+                                disabled={humanPredictionBusy}
+                              />
+                              <button
+                                className="primary-button"
+                                disabled={humanPredictionBusy || !humanPredictionValue}
+                                onClick={() => void submitHumanPrediction(false)}
+                              >
+                                {humanPredictionBusy ? 'Waiting for wallet…' : 'Commit prediction'}
+                              </button>
+                            </div>
+                          ) : round.phase === 'REVEAL' &&
+                            humanPredictionSubmitted &&
+                            !humanPredictionState?.revealed &&
+                            !humanPredictionState?.missed ? (
+                            <button
+                              className="primary-button"
+                              disabled={humanPredictionBusy}
+                              onClick={() => void submitHumanPrediction(true)}
+                            >
+                              {humanPredictionBusy ? 'Waiting for wallet…' : 'Reveal prediction'}
+                            </button>
+                          ) : humanPredictionState?.revealed ? (
+                            <p role="status">Your prediction has been revealed on-chain.</p>
+                          ) : humanPredictionState?.missed ? (
+                            <p role="status">The reveal window has closed for this commitment.</p>
+                          ) : humanPredictionSubmitted ? (
+                            <p role="status">
+                              Prediction committed. Reveal is available during the reveal window.
+                            </p>
+                          ) : (
+                            <p role="status">
+                              A wallet session is required, and predictions are accepted only before
+                              the commit deadline.
+                            </p>
+                          )}
+                          {humanPredictionTx && (
+                            <ChainLink hash={humanPredictionTx} explorer={status.explorer} />
+                          )}
+                          {humanPredictionError && (
+                            <p role="alert" className="worker-error">
+                              {humanPredictionError}
+                            </p>
+                          )}
+                        </section>
+                      )}
                       {round.lastError && (
                         <div className="worker-error">
                           <span>{round.lastError}</span>
@@ -1048,6 +1391,104 @@ export default function App() {
               </div>
               <div className="setting-row">
                 <div>
+                  <h3>Wallet account</h3>
+                  <span>
+                    {!status?.features.walletAuth
+                      ? 'Wallet sign-in is disabled in this environment'
+                      : walletSession
+                        ? `Signed in as ${short(walletSession.address)}`
+                        : 'Sign in with a BOT Chain wallet'}
+                  </span>
+                </div>
+                {status?.features.walletAuth ? (
+                  <div className="wallet-actions">
+                    {walletSession ? (
+                      <button
+                        className="secondary-button"
+                        disabled={walletAuthBusy}
+                        onClick={() => void disconnectWallet()}
+                      >
+                        {walletAuthBusy ? (
+                          <LoaderCircle size={16} className="spin" />
+                        ) : (
+                          <X size={16} />
+                        )}
+                        {walletAuthBusy ? 'Please wait...' : 'Sign out'}
+                      </button>
+                    ) : (
+                      <button
+                        className="secondary-button"
+                        disabled={walletAuthBusy}
+                        onClick={() => void connectWallet('injected')}
+                      >
+                        {walletAuthBusy ? (
+                          <LoaderCircle size={16} className="spin" />
+                        ) : (
+                          <ShieldCheck size={16} />
+                        )}
+                        {walletAuthBusy ? 'Please wait...' : 'Connect injected wallet'}
+                      </button>
+                    )}
+                    {walletConnectAvailable && (
+                      <button
+                        className="secondary-button"
+                        disabled={walletAuthBusy}
+                        onClick={() => void connectWallet('walletconnect')}
+                      >
+                        {walletAuthBusy ? (
+                          <LoaderCircle size={16} className="spin" />
+                        ) : (
+                          <ShieldCheck size={16} />
+                        )}
+                        {walletAuthBusy
+                          ? 'Please wait...'
+                          : walletSession
+                            ? 'Switch to WalletConnect'
+                            : 'WalletConnect'}
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <span className="badge">Unavailable</span>
+                )}
+              </div>
+              {status?.features.walletAuth && !walletConnectAvailable && (
+                <p className="setting-note">
+                  WalletConnect needs a public project ID configured for this frontend deployment.
+                </p>
+              )}
+              {walletAuthError && (
+                <div className="alert" role="alert">
+                  {walletAuthError}
+                </div>
+              )}
+              {walletSession && status?.features.d1Persistence && (
+                <div className="wallet-actions account-data-actions">
+                  <button
+                    className="secondary-button"
+                    disabled={accountBusy}
+                    onClick={() => void exportWalletAccount()}
+                  >
+                    {accountBusy ? <LoaderCircle size={16} className="spin" /> : <ArrowDownToLine size={16} />}
+                    Export account data
+                  </button>
+                  <button
+                    className="secondary-button danger-button"
+                    disabled={accountBusy}
+                    onClick={() => void deleteWalletAccount()}
+                  >
+                    {accountBusy ? <LoaderCircle size={16} className="spin" /> : <XCircle size={16} />}
+                    Delete account
+                  </button>
+                </div>
+              )}
+              {accountError && (
+                <div className="alert" role="alert">
+                  {accountError}
+                </div>
+              )}
+              <div className="setting-row">
+                <div>
                   <h3>Model provider</h3>
                   <span>Groq</span>
                 </div>
@@ -1325,6 +1766,12 @@ export default function App() {
               <span>Scoring</span>
               <b>Absolute prediction error</b>
             </div>
+            {(reviewer || mode === 'onchain') && (
+              <p className="muted">
+                AI-round transaction fees are paid by the server operator wallet, not your
+                connected wallet.
+              </p>
+            )}
             {error && (
               <div className="alert" role="alert">
                 {error}

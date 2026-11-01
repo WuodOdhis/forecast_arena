@@ -13,4 +13,10 @@ export default defineConfig({
       args: ['--no-sandbox'],
     },
   },
+  webServer: {
+    command: 'npx vite --host 127.0.0.1',
+    url: 'http://127.0.0.1:5173',
+    reuseExistingServer: !process.env.CI,
+    timeout: 30_000,
+  },
 });

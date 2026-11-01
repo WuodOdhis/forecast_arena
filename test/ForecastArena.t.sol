@@ -65,4 +65,78 @@ contract ForecastArenaTest {
         require(c != arena.commitmentFor(1, keccak256("b"), address(this), 42, SALT), "Agent replay");
         require(c != arena.commitmentFor(1, AGENT, address(0xBEEF), 42, SALT), "Sender replay");
     }
+
+    function testWalletCreatedRoundAndHumanCommitReveal() public {
+        address user = address(0xBEEF);
+        vm.prank(user);
+        uint256 id = arena.createUserRound(keccak256("user rules"), 200, 300, 300, 400);
+        require(id == 2 && arena.roundOrigin(id) == user, "Creator not recorded");
+
+        bytes32 commitment = arena.humanCommitmentFor(id, user, 123, SALT);
+        vm.prank(user);
+        arena.commitHuman(id, commitment);
+        vm.warp(200);
+        vm.prank(user);
+        arena.revealHuman(id, 123, SALT);
+        (, uint256 value, bool revealed, bool missed) = arena.humanPredictions(id, user);
+        require(value == 123 && revealed && !missed, "Human reveal mismatch");
+    }
+
+    function testHumanCommitmentCannotBeReplacedAndMissIsPermanent() public {
+        address user = address(0xBEEF);
+        uint256 id = arena.createUserRound(keccak256("user rules"), 200, 300, 300, 400);
+        bytes32 commitment = arena.humanCommitmentFor(id, user, 123, SALT);
+        vm.prank(user);
+        arena.commitHuman(id, commitment);
+        vm.expectRevert(bytes("Already committed"));
+        vm.prank(user);
+        arena.commitHuman(id, bytes32(uint256(1)));
+
+        vm.warp(300);
+        arena.markHumanMissedReveal(id, user);
+        (, , bool revealed, bool missed) = arena.humanPredictions(id, user);
+        require(!revealed && missed, "Miss not persisted");
+        vm.expectRevert(bytes("Reveal closed"));
+        vm.prank(user);
+        arena.revealHuman(id, 123, SALT);
+    }
+
+    function testAccessControlsPauseNewActionsAndPauserCanCancel() public {
+        address pauser = address(0xA11CE);
+        address creator = address(0xCAFE);
+        arena.setAccessControls(pauser, creator);
+
+        vm.expectRevert(bytes("Only round creator"));
+        arena.createRound(keccak256("rules"), 200, 300, 300, 400);
+        vm.expectRevert(bytes("Only round creator"));
+        vm.prank(address(0xBEEF));
+        arena.createRound(keccak256("rules"), 200, 300, 300, 400);
+        vm.prank(creator);
+        uint256 id = arena.createRound(keccak256("rules"), 200, 300, 300, 400);
+
+        vm.prank(pauser);
+        arena.pause();
+        vm.expectRevert(bytes("Paused"));
+        arena.createUserRound(keccak256("user rules"), 200, 300, 300, 400);
+        vm.prank(pauser);
+        arena.cancel(id);
+        vm.prank(pauser);
+        arena.unpause();
+        (, , , , , , bool cancelled, , ) = arena.rounds(id);
+        require(cancelled, "Pauser cancellation not recorded");
+    }
+
+    function testUserRoundWindowsAreBounded() public {
+        vm.expectRevert(bytes("Commit window too long"));
+        arena.createUserRound(keccak256("rules"), uint64(100 + 1 days + 1), uint64(100 + 1 days + 2), uint64(100 + 1 days + 2), uint64(100 + 1 days + 3));
+    }
+
+    function testSettlementIsIdempotentButRejectsConflictingResult() public {
+        vm.warp(400);
+        bytes32 evidence = keccak256("evidence");
+        arena.settle(1, 0, evidence);
+        arena.settle(1, 0, evidence);
+        vm.expectRevert(bytes("Conflicting settlement"));
+        arena.settle(1, 1, evidence);
+    }
 }

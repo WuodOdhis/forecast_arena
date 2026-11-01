@@ -2,12 +2,24 @@
 
 ## Status
 
-Milestones 0 and 1 are complete. Milestone 5's website-compliance work has
-started. Contract migration, wallet authentication, D1 persistence, user-driven
-on-chain actions, production operations, and independent verification remain
-open. A standalone prototype contract has been deployed on BOT Chain mainnet for
-validation; this is not a product launch. Announcements and creation of
-real-user activity remain outside this plan's autonomous execution.
+Milestones 0 and 1 are complete. A revised contract is deployed on BOT Testnet,
+and a staging AI round has completed commit, reveal, settlement, and independent
+evidence verification. Experimental injected-wallet sign-in remains
+default-off in production. The Worker-side D1 wallet-session adapter and wallet
+sign-in are now enabled and live-tested in staging; wallet-signed human
+commit/reveal controls remain local only and feature-gated. WalletConnect,
+user-created-round UI and indexing, D1-backed round/account history, production
+monitoring and recovery drills, and an independent contract review remain open.
+The revised contract is not a production release; mainnet user actions remain
+disabled.
+Announcements and creation of real-user activity remain outside this plan's
+autonomous execution.
+
+The authorized Cloudflare account has isolated staging and production D1
+databases with migrations 0001 and 0002 applied. The staging Worker is deployed
+and health-checked on BOT Testnet. Its successful round was independently
+verified against canonical chain data. The live Vercel API proxy still points
+to the existing Worker and was not switched.
 
 ## Verified repository baseline
 
@@ -17,15 +29,18 @@ real-user activity remain outside this plan's autonomous execution.
 - `shared/chain.ts` and `shared/arena.ts` currently hardcode BOT testnet chain ID
   968. The local and hosted paths share round logic; transactions are signed by
   the server-side operator.
-- `contracts/ForecastArena.sol` is operator-controlled and does not custody
-  funds. It has commit/reveal and cancellation, but no user-created rounds,
-  user-submitted predictions, role separation, pause controls, or reorg-aware
-  settlement.
-- The frontend has public browsing and local practice mode, but no injected or
-  WalletConnect wallet integration, user identity, or wallet-authenticated
-  history.
-- Local storage is SQLite; hosted on-chain state is stored as serialized round
-  records in a Durable Object. There are no D1 migrations or per-wallet records.
+- `contracts/ForecastArena.sol` does not custody funds. The revised testnet
+  contract has separated operator, pauser, and round-creator roles; bounded
+  user-created rounds; human commit/reveal; pause controls; and idempotent
+  settlement. Outcomes remain operator-reported.
+- The frontend has public browsing, local practice, experimental injected-wallet
+  sign-in, and local-only wallet commit/reveal controls for existing rounds.
+  WalletConnect, user-created-round UI, and persistent human history are not
+  implemented.
+- Hosted rounds and alarm scheduling remain in Durable Object SQLite. D1 stores
+  wallet authentication data in staging; D1 schema also defines account and
+  round-related tables, but the application does not yet use them for rounds,
+  predictions, settlements, or leaderboards.
 - Existing project checks include `npm test`, `npm run contracts:test`,
   `npm run build`, and Playwright tests. Existing e2e includes testnet activity;
   it must not be used to manufacture mainnet activity.
@@ -142,10 +157,12 @@ favicon/social card, manifest, robots, and sitemap are present. The mocked
 Playwright reviewer test asserts the rendered links, title, About disclosure,
 and footer across the app views.
 
-**Still open:** The website has not been redeployed or verified live; the official
-BOT logo asset has not been obtained; ecosystem announcements and Twitter account
-verification remain external; other visual/accessibility/compliance checks remain
-open.
+**Still open:** This working tree has not been redeployed. Ecosystem
+announcements and Twitter account verification remain external; other
+visual/accessibility/compliance checks remain open. The existing public website
+and testnet API were checked live on 2026-11-01; those checks do not deploy this
+working tree or establish mainnet readiness. The bundled logo was visually
+compared with the official BOT Chain site asset.
 
 ### Milestone 2 — Contract and deployment tooling
 
@@ -162,6 +179,14 @@ open.
 - Add operator transaction retry/replacement handling and a durable dead-letter
   path before settlement automation is enabled.
 
+**Partially implemented locally:** The current contract source adds independent
+pauser and round-creator roles, a pause control, bounded public user-round
+creation, direct human commit/reveal, missed-reveal records, and idempotent
+settlement. Foundry lifecycle and authorization tests pass. This remains an
+undeployed prototype: formal review, robust transaction recovery, staging
+deployment, and a human-reviewed deployment are still required. The existing
+mainnet prototype is unchanged.
+
 **Gate:** Local-chain tests pass; testnet staging lifecycle passes. Mainnet
 deployment requires explicit operator approval, a funded operator account, and a
 final human review of the exact deployment artifact and transaction.
@@ -176,6 +201,13 @@ final human review of the exact deployment artifact and transaction.
   reproduce the outcome; document RPC-only usage and known provider constraints.
 - Do not rely on `eth_getLogs` from the official mainnet RPC because BOT Chain
   documentation says it is disabled there.
+
+**Partially implemented locally:** `npm run verify:round -- <round-id>` checks
+the published rules/evidence hashes, canonical RPC block hashes and counts,
+confirmation depth, settlement receipt, and contract state. It passed against a
+settled public BOT Testnet round on 2026-11-01. Independent reorganization
+fixtures and repeatable verification on the final staging deployment remain
+required.
 
 **Gate:** Deterministic fixtures, local reorg tests, and an independent
 verification run against a completed testnet round agree byte-for-byte on the
@@ -199,6 +231,26 @@ evidence and outcome.
 - Keep practice data local unless the user explicitly imports it once; imported
   practice records remain distinct from on-chain records and leaderboards.
 
+**Partially completed:** Injected-wallet sign-in remains default-off and
+EOA-only. It uses origin-, address-, chain-, and expiry-bound challenges,
+single-use signatures, rate limits, revocable HttpOnly cookies, and account
+change handling. A typed D1 adapter now persists wallet challenges, rate-limit
+attempts, and sessions when `FEATURE_D1_PERSISTENCE=true`; local adapter tests
+cover replay, expiry, revocation, and rate limits. The adapter is enabled in the
+staging Worker and has passed a live sign-in, session-restore, logout, and
+revocation check against D1. Production remains disabled. WalletConnect,
+cross-device round/account history, account export/deletion, contract-wallet
+signatures, and full browser-to-hosted-Worker verification remain open.
+
+**Partially completed:** Direct injected-wallet human prediction commit/reveal
+is implemented locally behind `FEATURE_HUMAN_PREDICTIONS`; it verifies the
+connected account and configured chain, checks the commitment against the
+contract, stores the reveal secret in browser local storage, submits transactions
+from the user's wallet, and waits for receipts. It is not deployed or enabled.
+User-created-round UI, durable indexing/history for user rounds, scoring and
+leaderboards for human predictions, and live-wallet end-to-end testing remain
+open. The D1 schema is a foundation, not a complete D1 application data layer.
+
 **Gate:** Worker/server tests cover auth, replay, CSRF, account changes, persistence,
 export/deletion, and restoration across simulated sessions.
 
@@ -213,7 +265,8 @@ export/deletion, and restoration across simulated sessions.
   persist and surface rejected attempts without hiding failures.
 
 **Gate:** Local-chain and testnet staging e2e cover wallet-signed create/commit/
-reveal/settle and reconnect. Mainnet usage criteria require independently
+reveal/settle and reconnect. Current verified staging evidence covers the
+operator-driven AI round lifecycle, not human wallet actions. Mainnet usage criteria require independently
 verifiable, voluntary actions by real users and cannot be fabricated or guaranteed
 by code changes.
 
@@ -248,12 +301,20 @@ states, metadata, mobile layout, and absence of dead/loading-forever states.
 **Gate:** Security-relevant tests, CI checks, backup restore, and documented
 incident drills pass before production deployment.
 
+**Partially implemented locally:** A local SQLite backup command, health
+endpoints, request IDs, recovery notes, dependency audit, secret scanning, and CI
+checks exist. A 15-minute staging health-check workflow and a D1 SQL export
+command with an in-memory schema restore rehearsal are included locally. The
+workflow is not active on GitHub until pushed. Production alert routing,
+data-bearing restore drills, structured operational telemetry, incident drills,
+and an independent contract security review remain open.
+
 ### Milestone 8 — CI, staging, and launch documentation
 
 - Configure CI for lint/typecheck, unit/worker tests, Foundry, local-chain e2e,
   secret scan, dependency audit, and production build. Gate deployment on green CI.
-- Complete a testnet staging lifecycle that mirrors the final contract and worker
-  configuration without creating synthetic mainnet activity.
+- Keep the successful BOT Testnet staging lifecycle reproducible as the worker
+  and wallet-action changes are deployed; never create synthetic mainnet activity.
 - Update README and add DEPLOY, OPERATIONS, ECOSYSTEM_CHECKLIST, LAUNCH, RUNBOOK,
   and SECURITY documentation with claims backed by code and evidence.
 - The launch copy, official social posts, actual deployments, and operation of

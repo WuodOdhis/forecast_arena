@@ -17,6 +17,40 @@ Without credentials, choose **Local practice**. Two clearly labelled statistical
 
 An initial one-minute practice round takes about two minutes: 20 seconds for commits, 20 seconds for reveals, 60 seconds for observation, then block confirmations and evidence collection. Keep the backend running through the reveal deadline. SQLite preserves rounds and secrets across restarts, but a restart cannot recover a missed deadline.
 
+## Experimental wallet sign-in
+
+The injected-wallet sign-in flow is experimental and disabled by default. It
+proves control of an EVM address for the configured chain; it does not grant
+operator access. WalletConnect is not implemented.
+
+For local development only, set `FEATURE_WALLET_AUTH=true` in `.env`, restart
+the app, and use **Settings → Connect wallet** with a BOT Chain-compatible
+injected wallet. The server issues a five-minute, single-use challenge bound to
+the address, browser origin, and configured chain ID. It verifies the personal
+signature and stores only a hash of the seven-day session token. The browser
+receives an HttpOnly, SameSite=Lax cookie; HTTPS deployments add the Secure
+attribute. Challenges are limited to five per address per 15 minutes.
+
+Direct human commit/reveal controls for an existing on-chain round are also
+experimental and disabled by default. For local testing, enable both
+`FEATURE_WALLET_AUTH=true` and `FEATURE_HUMAN_PREDICTIONS=true`. The wallet signs
+the contract transactions directly; the app checks the connected address and
+chain, verifies the commitment against the contract, and waits for transaction
+receipts. The reveal value and salt are stored in that browser's local storage,
+not sent to the server. Keep the same browser profile until reveal; clearing
+site data before reveal can make the prediction unrevealable. These controls do
+not yet support WalletConnect, user-created rounds, cross-device recovery,
+human scoring, or a human leaderboard.
+
+The Cloudflare D1 adapter is selected only when
+`FEATURE_D1_PERSISTENCE=true`. It persists wallet challenges, address rate-limit
+attempts, and wallet sessions; round processing and round records remain in
+Durable Object SQLite. The staging Worker has wallet sign-in and D1 persistence
+enabled and has passed a live sign-in/restore/logout test. Human prediction
+controls are still local code and remain disabled in staging. Production remains
+gated: do not enable wallet features until the deployed origin allowlist, HTTPS
+cookie behavior, storage, backup/recovery, and contract have been reviewed.
+
 ## Enable on-chain AI rounds
 
 Create `.env` using the variable names in [`.env.example`](../.env.example):
@@ -75,6 +109,29 @@ The operator-controlled prototype contract was deployed on 2026-10-31:
 - Address: [`0xcd033df00ecf939247c9bcb3c79b7f27ed616c8a`](https://scan.botchain.ai/address/0xcd033df00ecf939247c9bcb3c79b7f27ed616c8a)
 - Deployment transaction: [`0x003f6df2c84104076d6e6c39b4ef69c7dc9b0c9a56682489a12cf89295738e82`](https://scan.botchain.ai/tx/0x003f6df2c84104076d6e6c39b4ef69c7dc9b0c9a56682489a12cf89295738e82)
 - Receipt: successful on chain 677 with the app's 12-confirmation buffer met.
+
+The working tree now contains a revised contract implementation with separated
+pauser/round-creator controls, pause behavior, bounded public user rounds,
+wallet-submitted human commitments, missed-reveal records, and idempotent
+settlement. Foundry tests cover these transitions. This is a new artifact; it
+does not modify the already deployed prototype. Do not point the running app at a
+new contract until a reviewed testnet deployment and end-to-end migration test
+have passed.
+
+After a completed on-chain round is published by a reachable API, independently
+recompute its rules/evidence hashes and compare every canonical block and
+settlement record with the configured RPC:
+
+```powershell
+$env:ARENA_API_URL = 'https://your-reviewed-staging-api.example'
+$env:CHAIN_PROFILE = 'staging'
+npm run verify:round -- '<round-id>'
+```
+
+The verifier checks the configured chain ID, observation boundaries, canonical
+block hashes and transaction counts, configured confirmation depth, committed
+rules/evidence hashes, settlement receipt, and contract state. It requires the
+round API and a matching RPC profile to be reachable.
 
 This is a contract deployment for validation, not a public product launch.
 Mainnet round creation remains disabled pending completion of the wallet,
