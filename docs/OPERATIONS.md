@@ -2,15 +2,17 @@
 
 ## Current readiness
 
-The authorized Cloudflare account has separate staging and production D1
-databases, and a testnet staging Worker has completed a verified round lifecycle.
+The compatible ForecastArena contract is deployed on BOT Chain mainnet at
+[`0x492331d1a74134e67cd2fce357d47438feaa2771`](https://scan.botchain.ai/address/0x492331d1a74134e67cd2fce357d47438feaa2771).
+The mainnet Worker is deployed, references this address, and keeps all mainnet
+features disabled. Production D1 migration `0003_round_index.sql` is pending.
+The Vercel proxy configuration now targets the mainnet Worker; the production
+Vercel deployment still needs to publish this repository change and be verified
+against the live domain. D1 remains disabled.
+No hosted alert destination or automated cloud backup/restore has been verified.
 Staging wallet sign-in and D1 authentication are enabled; human prediction
-transactions remain disabled there until the frontend/API flow is isolated and
-tested. The existing Vercel site still proxies to its original Worker; a live
-read-only check currently reports BOT Testnet (chain ID 968), not mainnet.
-There is no mainnet deployment, hosted alert destination, or automated cloud
-backup/restore. Do not treat staging or the current public site as production
-readiness.
+transactions remain disabled pending isolated end-to-end testing. Do not treat
+the current public site as mainnet product readiness.
 
 ## Local SQLite backup
 

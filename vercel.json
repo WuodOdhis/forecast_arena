@@ -7,7 +7,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://predictbot-api.newtonesila.workers.dev/api/:path*"
+      "destination": "https://predictbot-api-mainnet.victorokoth549.workers.dev/api/:path*"
     }
   ],
   "headers": [

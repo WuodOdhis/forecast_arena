@@ -172,9 +172,11 @@ The verified BOT mainnet profile uses chain ID 677, RPC
 [`https://rpc.botchain.ai`](https://dev-docs.botchain.ai/docs/Developers/json-rpc-endpoint/),
 explorer [`https://scan.botchain.ai`](https://scan.botchain.ai), and native token
 BOT. Its contract and signing key are separately configured through
-`MAINNET_ARENA_CONTRACT_ADDRESS` and `MAINNET_DEPLOYER_PRIVATE_KEY`; no mainnet
-contract address is configured by this repository. An RPC chain-ID mismatch
-fails closed.
+`MAINNET_ARENA_CONTRACT_ADDRESS` and `MAINNET_DEPLOYER_PRIVATE_KEY`. The
+compatible mainnet contract is
+[`0x492331d1a74134e67cd2fce357d47438feaa2771`](https://scan.botchain.ai/address/0x492331d1a74134e67cd2fce357d47438feaa2771);
+the mainnet Worker config includes this public address but keeps all mainnet
+feature flags disabled. An RPC chain-ID mismatch fails closed.
 
 Outcome collection waits for 12 confirmations in each profile. This is the
 application's configurable safety buffer, not a BOT Chain finality guarantee.
@@ -196,12 +198,20 @@ npx wrangler secret put ADMIN_TOKEN
 npx wrangler secret put STAGING_DEPLOYER_PRIVATE_KEY --env staging
 npx wrangler secret put STAGING_ARENA_CONTRACT_ADDRESS --env staging
 npx wrangler secret put MAINNET_DEPLOYER_PRIVATE_KEY --env mainnet
-npx wrangler secret put MAINNET_ARENA_CONTRACT_ADDRESS --env mainnet
+npx wrangler secret put GROQ_API_KEY --env mainnet
+npx wrangler secret put ADMIN_TOKEN --env mainnet
 ```
 
 Configure `ALLOWED_ORIGINS` and provider secrets independently for each named
-environment as required. The provided mainnet environment deliberately has no
-contract address or signing secret and sets `FEATURE_MAINNET_ONCHAIN=false`.
+environment as required. The deployed contract address is public configuration
+in `wrangler.jsonc`; never store it as a secret. The currently authenticated
+Cloudflare account does not yet contain the mainnet Worker, so its per-Worker
+secrets have not been provisioned. The mainnet environment keeps on-chain
+rounds, wallet auth, user-created rounds, human predictions, and D1 persistence
+disabled.
+Do not point the production Vercel proxy at a mainnet Worker until its deployment,
+required secrets, allowed origin, persistence requirements, and read-only health
+checks have been verified.
 Validate the bundles without deploying:
 
 ```powershell

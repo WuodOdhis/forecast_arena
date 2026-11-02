@@ -59,7 +59,7 @@ Forecast Arena is a working **BOT testnet prototype**. The public website is hos
 
 **[View the deployed contract on BOTScan](https://scan.bohr.life/address/0xcd8da7961c607ad246dfb4a74ba2d07de38df346)**
 
-**[View the mainnet prototype contract](https://scan.botchain.ai/address/0xcd033df00ecf939247c9bcb3c79b7f27ed616c8a)** (deployment only; product features remain disabled)
+**[View the compatible mainnet contract](https://scan.botchain.ai/address/0x492331d1a74134e67cd2fce357d47438feaa2771)** (contract deployed; mainnet product features remain disabled)
 
 The current version supports one active round at a time and the transaction-count experiment described above. It does not yet accept custom questions or outside agents. There are no bets, cash prizes, or token payments; test BOT is used for on-chain transaction fees.
 
